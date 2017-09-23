@@ -27,7 +27,7 @@
 static void (*_spi_slave_rx_data_cb)() = NULL;
 static void (*_spi_slave_tx_data_cb)() = NULL;
 static void (*_spi_slave_rx_status_cb)(uint32_t data) = NULL;
-static void (*_spi_slave_tx_status_cb)() = NULL;
+static void (*_spi_slave_tx_status_cb)(uint32_t data) = NULL;
 static uint32_t _spi_slave_buffer[8];
 
 void ICACHE_RAM_ATTR _spi_slave_isr_handler(void *arg)
@@ -41,14 +41,13 @@ void ICACHE_RAM_ATTR _spi_slave_isr_handler(void *arg)
         status = SPI1S;
         SPI1S &= ~(INTERRUPTS_EN);//disable interrupts
         SPI1S |= SPISSRES;//reset
-        SPI1S &= ~(0x1F);//clear interrupts
-        SPI1S |= (INTERRUPTS_EN);//enable interrupts
 
         if((status & SPISRBIS) != 0) {
             _spi_slave_tx_data_cb();
         }
         if((status & SPISRSIS) != 0) {
-            _spi_slave_tx_status_cb();
+            //uint32_t s = SPI1WS;
+            //_spi_slave_tx_status_cb(s);
         }
         if((status & SPISWSIS) != 0) {
             uint32_t s = SPI1WS;
@@ -57,6 +56,10 @@ void ICACHE_RAM_ATTR _spi_slave_isr_handler(void *arg)
         if((status & SPISWBIS) != 0) {
             _spi_slave_rx_data_cb();
         }
+
+        SPI1S |= SPISSRES;//reset
+        SPI1S &= ~(0x1F);//clear interrupts
+        SPI1S |= (INTERRUPTS_EN);//enable interrupts
     } else if(istatus & (1 << SPII0)) { //SPI0 ISR
         SPI0S &= ~(0x3ff);//clear SPI ISR
     } else if(istatus & (1 << SPII2)) {} //I2S ISR
@@ -127,7 +130,7 @@ void spi_slave_on_status(void (*rxs_cb)(uint32_t))
     _spi_slave_rx_status_cb = rxs_cb;
 }
 
-void spi_slave_on_status_sent(void (*txs_cb)())
+void spi_slave_on_status_sent(void (*txs_cb)(uint32_t data))
 {
     _spi_slave_tx_status_cb = txs_cb;
 }

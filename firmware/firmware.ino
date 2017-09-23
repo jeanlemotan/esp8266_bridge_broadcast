@@ -101,8 +101,6 @@ void packet_sent_cb(uint8 status)
 
 void packet_received_cb(struct RxPacket *pkt)
 {
-  lock_guard lg;
-  
   uint16_t len = pkt->rx_ctl.legacy_length;
   if (len <= HEADER_SIZE)
   {
@@ -128,23 +126,33 @@ void packet_received_cb(struct RxPacket *pkt)
   len -= 4;//the received length has 4 more bytes at the end for some reason.
 
   int16_t rssi = pkt->rx_ctl.rssi;
-  if (s_uart_verbose > 0)
+  if (s_uart_verbose > 1)
   {
     Serial.printf("RSSI: %d, CH: %d, SZ: %d\n", rssi, pkt->rx_ctl.channel, len);
-    if (s_uart_verbose > 1)
+    if (s_uart_verbose > 2)
     {
       Serial.printf("---->\n");
       Serial.write(data, len);
       Serial.printf("\n<----\n");
     }
   }
-  SPI_Packet* p = s_spi_free_queue.pop();
+
+  SPI_Packet* p = nullptr;
+  {
+    lock_guard lg;
+    p = s_spi_free_queue.pop();
+  }
+  
   if (p)
   {
     memcpy(p->payload_ptr, data, std::min<size_t>(len, MAX_PAYLOAD_SIZE));
     p->size = len;
     p->rssi = rssi;
-    s_spi_to_send_queue.push(p);
+    
+    {
+      lock_guard lg;
+      s_spi_to_send_queue.push(p);
+    }
   }
   else
   {
@@ -159,8 +167,6 @@ WLAN_Packet* s_uart_packet = nullptr;
 
 void ICACHE_FLASH_ATTR parse_command()
 {
-  lock_guard lg;
-  
   if (s_uart_command == 0)
   {
     char ch = Serial.read();
@@ -170,6 +176,8 @@ void ICACHE_FLASH_ATTR parse_command()
     }
     s_uart_command = ch;
   }
+
+  lock_guard lg;
 
   int available = Serial.available();
   if (available <= 0)
@@ -338,6 +346,8 @@ enum SPI_Command : uint16_t
 
 void spi_on_data_received()
 {
+  lock_guard lg;
+  
   if (s_spi_incoming_packet)
   {
     uint32_t poffset = s_spi_incoming_packet->offset;
@@ -368,13 +378,12 @@ void spi_on_data_received()
 
 void spi_on_data_sent()
 {
+  lock_guard lg;
+  
   if (s_spi_outgoing_packet)
   {
-    uint32_t poffset = s_spi_outgoing_packet->offset;
     uint32_t psize = s_spi_outgoing_packet->size;
-    spi_slave_set_data((uint32_t*)(s_spi_outgoing_packet->payload_ptr + poffset));
-
-    uint32_t size = psize - poffset;
+    uint32_t size = psize - s_spi_outgoing_packet->offset;
     if (size > CHUNK_SIZE)
     {
       size = CHUNK_SIZE;
@@ -385,6 +394,12 @@ void spi_on_data_sent()
       s_spi_free_queue.push_and_clear(s_spi_outgoing_packet);
       //s_spi_packets_sent++;
     }
+    else
+    {
+      //prepare next transfer
+      spi_slave_set_data((uint32_t*)(s_spi_outgoing_packet->payload_ptr + s_spi_outgoing_packet->offset));
+    }
+
     s_stats.spi_data_sent += size;
   }
   else
@@ -396,6 +411,8 @@ void spi_on_data_sent()
 
 void spi_on_status_received(uint32_t status)
 {
+  lock_guard lg;
+
 //  Serial.printf("spi status received sent: %d\n", status);
   SPI_Command command = (SPI_Command)(status >> 24);
   if (command == SPI_Command::SPI_CMD_SEND_PACKET)
@@ -430,7 +447,7 @@ void spi_on_status_received(uint32_t status)
   {
     if (s_spi_outgoing_packet)
     {
-      LOG("SPI outgoing packet interrupted\n");
+      LOG("SPI outgoing packet interrupted by %d, offset %d, size %d\n", command, s_spi_outgoing_packet->offset, s_spi_outgoing_packet->size);
       s_spi_free_queue.push_and_clear(s_spi_outgoing_packet); //cancel the outgoing one
     }
   }
@@ -450,8 +467,9 @@ void spi_on_status_received(uint32_t status)
     if (s_spi_outgoing_packet)
     {
       uint32_t size = s_spi_outgoing_packet->size & 0xFFFF;
-      uint8_t rssi = *reinterpret_cast<uint8_t*>(&s_spi_outgoing_packet->rssi);
-      spi_slave_set_status((SPI_Command::SPI_CMD_GET_PACKET << 24) | (rssi) | size);
+      uint32_t rssi = *reinterpret_cast<uint8_t*>(&s_spi_outgoing_packet->rssi) & 0xFF;
+      uint32_t status = (uint32_t(SPI_Command::SPI_CMD_GET_PACKET) << 24) | (rssi << 16) | size;
+      spi_slave_set_status(status);
       spi_slave_set_data((uint32_t*)(s_spi_outgoing_packet->payload_ptr));
     }
     else
@@ -464,7 +482,7 @@ void spi_on_status_received(uint32_t status)
   {
     if (s_spi_incoming_packet)
     {
-      LOG("SPI incoming packet interrupted\n");
+      LOG("SPI incoming packet interrupted by %d\n", command);
       s_wlan_free_queue.push_and_clear(s_spi_incoming_packet); //cancel the incoming one
     }
   }
@@ -544,9 +562,11 @@ void spi_on_status_received(uint32_t status)
   //s_stats.spi_status_received++;
 }
 
-void spi_on_status_sent()
+void spi_on_status_sent(uint32_t status)
 {
-  spi_slave_set_status(0);
+//  lock_guard lg;
+  //LOG("Status sent: %d\n", status);
+//  spi_slave_set_status(0);
 //  s_spi_status_sent++;
 }
 

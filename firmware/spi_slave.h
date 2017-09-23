@@ -82,6 +82,6 @@ inline void spi_slave_get_data(uint32_t* data)
 void spi_slave_on_data(void (*rxd_cb)());
 void spi_slave_on_data_sent(void (*txd_cb)());
 void spi_slave_on_status(void (*rxs_cb)(uint32_t));
-void spi_slave_on_status_sent(void (*txs_cb)());
+void spi_slave_on_status_sent(void (*txs_cb)(uint32_t data));
 
 #endif
