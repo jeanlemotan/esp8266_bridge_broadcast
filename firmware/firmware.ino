@@ -71,29 +71,32 @@ float get_wlan_power_dBm()
 
 void packet_sent_cb(uint8 status)
 {
-  lock_guard lg;
-
-  if (s_wlan_packet)
   {
-    if (status == 0)
+    lock_guard lg;
+  
+    if (s_wlan_packet)
     {
-      //int dt = micros() - s_send_start_time;
-      //s_send_max_time = std::max(s_send_max_time, dt);
-      //s_send_min_time = std::min(s_send_min_time, dt);
-      s_stats.wlan_data_sent += s_wlan_packet->size;
+      if (status == 0)
+      {
+        //int dt = micros() - s_send_start_time;
+        //s_send_max_time = std::max(s_send_max_time, dt);
+        //s_send_min_time = std::min(s_send_min_time, dt);
+        s_stats.wlan_data_sent += s_wlan_packet->size;
+      }
+      else
+      {
+        LOG("WLAN send error");
+        s_stats.wlan_error_count++;
+      }
+      s_wlan_free_queue.push_and_clear(s_wlan_packet);
     }
     else
     {
-      LOG("WLAN send error");
+      LOG("WLAN send missing packet");
       s_stats.wlan_error_count++;
     }
-    s_wlan_free_queue.push_and_clear(s_wlan_packet);
   }
-  else
-  {
-    LOG("WLAN send missing packet");
-    s_stats.wlan_error_count++;
-  }
+  digitalWrite(LED_BUILTIN, HIGH);  
 }
 
 void packet_received_cb(struct RxPacket *pkt)
@@ -156,6 +159,8 @@ WLAN_Packet* s_uart_packet = nullptr;
 
 void ICACHE_FLASH_ATTR parse_command()
 {
+  lock_guard lg;
+  
   if (s_uart_command == 0)
   {
     char ch = Serial.read();
@@ -331,8 +336,6 @@ enum SPI_Command : uint16_t
     SPI_CMD_GET_STATS = 9,
 };
 
-constexpr uint32_t CHUNK_SIZE = 32;
-
 void spi_on_data_received()
 {
   if (s_spi_incoming_packet)
@@ -351,6 +354,7 @@ void spi_on_data_received()
     if (s_spi_incoming_packet->offset >= psize)
     {
       s_wlan_to_send_queue.push(s_spi_incoming_packet);
+      //s_wlan_free_queue.push_and_clear(s_spi_incoming_packet);
       //s_stats.spi_packets_received++;
     }
     s_stats.spi_data_received += size;
@@ -385,7 +389,7 @@ void spi_on_data_sent()
   }
   else
   {
-    LOG("SPI send missing packet");
+    LOG("SPI send missing packet\n");
     s_stats.spi_error_count++;
   }
 }
@@ -426,7 +430,7 @@ void spi_on_status_received(uint32_t status)
   {
     if (s_spi_outgoing_packet)
     {
-      LOG("SPI outgoing packet interrupted");
+      LOG("SPI outgoing packet interrupted\n");
       s_spi_free_queue.push_and_clear(s_spi_outgoing_packet); //cancel the outgoing one
     }
   }
@@ -460,7 +464,7 @@ void spi_on_status_received(uint32_t status)
   {
     if (s_spi_incoming_packet)
     {
-      LOG("SPI incoming packet interrupted");
+      LOG("SPI incoming packet interrupted\n");
       s_wlan_free_queue.push_and_clear(s_spi_incoming_packet); //cancel the incoming one
     }
   }
@@ -567,6 +571,9 @@ void setup()
   Serial.begin(115200);
   Serial.setTimeout(999999);
 
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, HIGH);
+
   bool ok = false;
   int res = 0;
 
@@ -619,6 +626,7 @@ void loop()
 {
   parse_command();
 
+  if (!s_wlan_packet)
   {
     WLAN_Packet* p = nullptr;
     {
@@ -632,7 +640,11 @@ void loop()
     
     if (p)
     {
+      digitalWrite(LED_BUILTIN, LOW);
       wifi_send_pkt_freedom(p->ptr, HEADER_SIZE + p->size, 0);   
+//      lock_guard lg;
+//      s_wlan_free_queue.push_and_clear(s_wlan_packet);
+
     }
   }
 

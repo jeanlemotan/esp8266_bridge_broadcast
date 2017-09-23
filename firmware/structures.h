@@ -2,19 +2,22 @@
 
 #include <cassert>
 
+constexpr size_t CHUNK_SIZE = 64;
+
 constexpr size_t HEADER_SIZE = 24;
 constexpr size_t MAX_PAYLOAD_SIZE = 1400 - HEADER_SIZE;
+constexpr size_t MAX_PAYLOAD_SIZE_CHUNK_PADDED = MAX_PAYLOAD_SIZE + 32;
 
 struct WLAN_Packet
 {
-  uint32_t storage[(HEADER_SIZE + MAX_PAYLOAD_SIZE) / 4 + 1];
+  uint32_t storage[(HEADER_SIZE + MAX_PAYLOAD_SIZE_CHUNK_PADDED) / 4];
   uint8_t* ptr = (uint8_t*)&storage;
   uint8_t* payload_ptr = ptr + HEADER_SIZE;
   uint16_t size = 0;
   uint16_t offset = 0;
 };
 
-static_assert(MAX_PAYLOAD_SIZE % 32 == 0, "Size is not aligned to 32 bytes boundary");
+static_assert(MAX_PAYLOAD_SIZE_CHUNK_PADDED % CHUNK_SIZE == 0, "Size is not padded to chunk boundary");
 
 struct SPI_Packet
 {
