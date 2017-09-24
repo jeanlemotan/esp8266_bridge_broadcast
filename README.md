@@ -1,6 +1,8 @@
 # esp8266_bridge_broadcast
 A SPI to ESP8266 broadcast (rfmon) firmware
 
+Dev blog: https://jeanleflambeur.wordpress.com/
+
 This lib + firmware allows you to inject and receive packets using an esp8266 module.
 It's meant for streaming data - like video - similarly to the wifibroadcast project, but instead of using of the shelf wifi dongles with patched firmwares, it uses the esp8266.
 
