@@ -11,7 +11,7 @@ It's meant for streaming data - like video - similarly to the wifibroadcast proj
 * Cheaper and readily available
 * Very short stack so less points of failure. It doesn't have to go through the kernel, 802.11 stack, rate control, firmware etc
 * Easy to add new features in the firmware
-* Very good sensitivity and power: Up to -92dBi and 22.5dBm
+* Very good sensitivity and power: Up to -98 dBi @1Mbps, -91 dBi @11Mbps, and ~20.5 dBm tx power
 * SPI connection so no USB issues on the Raspberry Pi
 
 **Disadvantages:**
