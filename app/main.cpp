@@ -359,17 +359,12 @@ int run_fec(Phy& phy)
 
     std::array<uint8_t, Phy::MAX_PAYLOAD_SIZE> tx_data;
 
-    int cin_fd = 0;
     fd_set fds;
     FD_ZERO(&fds);
-    FD_SET(cin_fd, &fds);
+    FD_SET(STDIN_FILENO, &fds);
 
-    int flags = fcntl(cin_fd, F_GETFL, 0);
-    fcntl(cin_fd, F_SETFL, flags | O_NONBLOCK);
-
-    timeval timeout;
-    timeout.tv_sec = 0;
-    timeout.tv_usec = 1000;
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
 
     Clock::time_point last_receive_tp = Clock::now();
     while (true)
@@ -384,9 +379,8 @@ int run_fec(Phy& phy)
             }
         }
 
-        if (select(1, &fds, 0, 0, &timeout) == 1)
         {
-            int res = read(cin_fd, tx_data.data(), tx_data.size());
+            int res = read(STDIN_FILENO, tx_data.data(), tx_data.size());
             if (res > 0)
             {
                 tx.add_tx_packet(tx_data.data(), static_cast<size_t>(res));
@@ -408,17 +402,12 @@ int run_no_fec(Phy& phy)
 
     std::array<uint8_t, Phy::MAX_PAYLOAD_SIZE> tx_data;
 
-    int cin_fd = 0;
     fd_set fds;
     FD_ZERO(&fds);
-    FD_SET(cin_fd, &fds);
+    FD_SET(STDIN_FILENO, &fds);
 
-    int flags = fcntl(cin_fd, F_GETFL, 0);
-    fcntl(cin_fd, F_SETFL, flags | O_NONBLOCK);
-
-    timeval timeout;
-    timeout.tv_sec = 0;
-    timeout.tv_usec = 1000;
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
 
     Clock::time_point last_receive_tp = Clock::now();
     while (true)
@@ -436,9 +425,8 @@ int run_no_fec(Phy& phy)
             }
         }
 
-        if (select(1, &fds, 0, 0, &timeout) == 1)
         {
-            int res = read(cin_fd, tx_data.data(), s_mtu);
+            int res = read(STDIN_FILENO, tx_data.data(), s_mtu);
             if (res > 0)
             {
                 phy.send_data(tx_data.data(), res);
