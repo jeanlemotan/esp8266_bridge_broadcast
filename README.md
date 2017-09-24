@@ -4,7 +4,7 @@ A SPI to ESP8266 broadcast (rfmon) firmware
 This lib + firmware allows you to inject and receive packets using an esp8266 module.
 It's meant for streaming data - like video - similarly to the wifibroadcast project, but instead of using of the shelf wifi dongles with patched firmwares, it uses the esp8266.
 
-The advantages over standard wifi dongles (like the WN721N) are:
+**The advantages** over standard wifi dongles (like the WN721N) are:
 * Ability to control the rate (from 1Mbps to 56Mbps) and modulation (CCK with and w/o short preamble and ODFM) 
 * Cheaper and readily available
 * Very short stack so less points of failure. It doesn't have to go through the kernel, 802.11 stack, rate control, firmware etc
@@ -12,7 +12,7 @@ The advantages over standard wifi dongles (like the WN721N) are:
 * Very good sensitivity and power: Up to -92dBi and 22.5dBm
 * SPI connection so no USB issues on the Raspberry Pi
 
-Disadvantages:
+**Disadvantages:**
 * More complicated connectivity. The module is connected through SPI to the host device which is a bit more complicated than just plugging a USB dongle
 * Limited bandwidth. With PIGPIO, 12Mhz SPI speed and 10us delay you can get ~8Mbps throughput. Recommended settings are 10Mhz and 20us delay which results in 5-6Mbps
 
@@ -44,7 +44,24 @@ There are 2 helper classes in the project:
 
 Both classes can be used independently in other projects.
 
+**Test app**
 There is also a test app (esp8266_app) that uses them and sends whatever is presented in its stdin and outputs to stdout whatever it received. You can configure the fec params, the spi speeds and the phy rates/power/channel.
+
+**Firmware**
+The firmware is done using the Arduino IDE and can be compiled with the 2.3.0 or 2.4.0 sdk. It does require some patching of the Arduino make command to allow access to an internal function:
+After downloading the board in arduino, go to *packages/esp8266/hardware/2.3.0/platform.txt* and locate the  *compiler.c.elf.flags* line:
+
+```
+compiler.c.elf.flags={compiler.warning_flags} -O3 -nostdlib -Wl,--no-check-sections -u call_user_start -u _printf_float -u _scanf_float -Wl,-static "-L{compiler.sdk.path}/lib" "-L{compiler.sdk.path}/ld" "-L{compiler.libc.path}/lib" "-T{build.flash_ld}" -Wl,--gc-sections -Wl,-wrap,system_restart_local -Wl,-wrap,spi_flash_read
+```
+
+Then add this at the end of that line: -Wl,-wrap=ppEnqueueRxq
+
+It should read this:
+```
+compiler.c.elf.flags={compiler.warning_flags} -O3 -nostdlib -Wl,--no-check-sections -u call_user_start -u _printf_float -u _scanf_float -Wl,-static "-L{compiler.sdk.path}/lib" "-L{compiler.sdk.path}/ld" "-L{compiler.libc.path}/lib" "-T{build.flash_ld}" -Wl,--gc-sections -Wl,-wrap,system_restart_local -Wl,-wrap,spi_flash_read **-Wl,-wrap=ppEnqueueRxq**
+```
+
 
 
 
