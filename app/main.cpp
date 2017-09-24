@@ -10,6 +10,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+bool s_verbose = false;
+bool s_flush = false;
+
 bool s_fec_benchmark = false;
 bool s_phy_benchmark = false;
 bool s_use_fec = false;
@@ -35,6 +38,8 @@ void show_help()
     std::cout << "Usage:\n";
     std::cout << "\t--fec-benchmark\tRuns a FEC benchmark\n";
     std::cout << "\t--phy-benchmark\tRuns a PHY bandwidth benchmark\n";
+    std::cout << "\t--verbose\tPrint out the settings\n";
+    std::cout << "\t--flush\tFlush stdout when writing to it. This can reduce latency\n";
     std::cout << "\t--fec K N\tUse FEC (Forward Error Correction) for transmission and reception\n";
     std::cout << "\t\tK and N are the coding constants. Every K packets, N are produced (N > K)\n";
     std::cout << "\t--mtu " << std::to_string(s_mtu) << "\tUse the specified packet size. Max is " << std::to_string(MAX_MTU) << "\n";
@@ -57,14 +62,14 @@ void show_help()
     std::cout << "\t\t11: 802.11g 24Mbps, ODFM modulation\n";
     std::cout << "\t\t12: 802.11g 36Mbps, ODFM modulation\n";
     std::cout << "\t\t13: 802.11g 48Mbps, ODFM modulation\n";
-    std::cout << "\t\t13: 802.11g 56Mbps, ODFM modulation\n";
+    std::cout << "\t\t14: 802.11g 56Mbps, ODFM modulation\n";
     std::cout << "\t--phy-power X\tThe PHY power in dBm between 0dBm to 20.5dBm\n";
     std::cout << "\t--phy-channel X\tThe PHY channel between 1 and 11\n";
 }
 
 int parse_arguments(int argc, const char* argv[])
 {
-    for (int i = 0; i < argc; i++)
+    for (int i = 1; i < argc; i++)
     {
         int remanining = argc - i - 1;
 
@@ -76,6 +81,14 @@ int parse_arguments(int argc, const char* argv[])
         else if (arg == "--phy-benchmark")
         {
             s_phy_benchmark = true;
+        }
+        else if (arg == "--verbose")
+        {
+            s_verbose = true;
+        }
+        else if (arg == "--flush")
+        {
+            s_flush = true;
         }
         else if (arg == "--fec")
         {
@@ -93,6 +106,7 @@ int parse_arguments(int argc, const char* argv[])
                 return -1;
             }
             s_use_fec = true;
+            i += 2;
         }
         else if (arg == "--mtu")
         {
@@ -187,6 +201,11 @@ int parse_arguments(int argc, const char* argv[])
             }
             s_phy_channel = std::stoul(argv[i + 1]);
             i++;
+        }
+        else
+        {
+            std::cerr << "Unknown argument: " << arg << "\n";
+            return -1;
         }
     }
 
@@ -290,7 +309,11 @@ int run_fec_benchmark()
 
 int run_fec(Phy& phy)
 {
-    std::cout << "Using FEC K" << std::to_string(s_fec_coding_k) << " / N" << std::to_string(s_fec_coding_n) << "\n";
+    if (s_verbose)
+    {
+        std::cout << "FEC\n\tK " << std::to_string(s_fec_coding_k) <<
+                     "\n\tN " << std::to_string(s_fec_coding_n) << "\n";
+    }
 
     typedef Fec_Encoder::Clock Clock;
 
@@ -324,7 +347,10 @@ int run_fec(Phy& phy)
     rx.on_rx_data_decoded = [](void const* data, size_t size)
     {
         std::cout.write(reinterpret_cast<const char*>(data), size);
-        //std::flush(std::cout);
+        if (s_flush)
+        {
+            std::flush(std::cout);
+        }
     };
 
     std::array<uint8_t, Phy::MAX_PAYLOAD_SIZE> rx_data;
@@ -403,7 +429,10 @@ int run_no_fec(Phy& phy)
             if (phy.receive_data(rx_data.data(), rx_data_size, rx_rssi))
             {
                 std::cout.write(reinterpret_cast<const char*>(rx_data.data()), rx_data_size);
-                //std::flush(std::cout);
+                if (s_flush)
+                {
+                    std::flush(std::cout);
+                }
             }
         }
 
@@ -468,9 +497,12 @@ int main(int argc, const char* argv[])
     Phy phy;
     if (s_use_spi_dev)
     {
-        std::cout << "SPI\n\tdev " << s_spi_dev <<
-                     " @ " << std::to_string(s_spi_speed) <<
-                     "Hz, " << std::to_string(s_spi_delay) << "us delay\n";
+        if (s_verbose)
+        {
+            std::cout << "SPI\n\tdev " << s_spi_dev <<
+                         "\n\tspeed " << std::to_string(s_spi_speed) <<
+                         " Hz\n\tdelay " << std::to_string(s_spi_delay) << "us\n";
+        }
         if (phy.init_dev(s_spi_dev.c_str(), s_spi_speed, s_spi_delay) != Phy::Init_Result::OK)
         {
             return -1;
@@ -478,10 +510,12 @@ int main(int argc, const char* argv[])
     }
     else
     {
-        std::cout << "SPI\n\tpigpio, port " << std::to_string(s_pigpio_spi_port)
-                  << ", channel " << std::to_string(s_pigpio_spi_channel)
-                  << " @ " << std::to_string(s_spi_speed)
-                  << "Hz, " << std::to_string(s_spi_delay) << "us delay\n";
+        if (s_verbose)
+        {
+            std::cout << "SPI\n\tpigpio, port " << std::to_string(s_pigpio_spi_port) << ", channel " << std::to_string(s_pigpio_spi_channel) <<
+                         "\n\tspeed " << std::to_string(s_spi_speed) <<
+                         " Hz\n\tdelay " << std::to_string(s_spi_delay) << "us\n";
+        }
         if (phy.init_pigpio(s_pigpio_spi_port, s_pigpio_spi_channel, s_spi_speed, s_spi_delay) != Phy::Init_Result::OK)
         {
             return -1;
@@ -504,10 +538,13 @@ int main(int argc, const char* argv[])
         uint8_t ch;
         actual_channel = phy.get_channel(ch) ? ch : -1;
     }
-    std::cout << "PHY\n\tset rate " << std::to_string(static_cast<int>(s_phy_rate)) << ", actual rate " << std::to_string(actual_rate)
-              << "\n\tset power " << std::to_string(s_phy_power) << ", actual power " << std::to_string(actual_power)
-              << "\n\tset channel " << std::to_string(s_phy_channel) << ", actual channel " << std::to_string(actual_channel)
-              << "\n";
+    if (s_verbose)
+    {
+        std::cout << "PHY\n\trequested rate " << std::to_string(static_cast<int>(s_phy_rate)) << ", actual rate " << std::to_string(actual_rate)
+                  << "\n\trequested power " << std::to_string(s_phy_power) << ", actual power " << std::to_string(actual_power)
+                  << "\n\trequested channel " << std::to_string(s_phy_channel) << ", actual channel " << std::to_string(actual_channel)
+                  << "\n";
+    }
 
     result = s_use_fec ? run_fec(phy) : run_no_fec(phy);
 
