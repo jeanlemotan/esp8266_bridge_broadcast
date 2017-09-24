@@ -13,6 +13,7 @@ It's meant for streaming data - like video - similarly to the wifibroadcast proj
 * SPI connection so no USB issues on the Raspberry Pi
 
 **Disadvantages:**
+
 * More complicated connectivity. The module is connected through SPI to the host device which is a bit more complicated than just plugging a USB dongle
 * Limited bandwidth. With PIGPIO, 12Mhz SPI speed and 10us delay you can get ~8Mbps throughput. Recommended settings are 10Mhz and 20us delay which results in 5-6Mbps
 
@@ -45,9 +46,11 @@ There are 2 helper classes in the project:
 Both classes can be used independently in other projects.
 
 **Test app**
+
 There is also a test app (esp8266_app) that uses them and sends whatever is presented in its stdin and outputs to stdout whatever it received. You can configure the fec params, the spi speeds and the phy rates/power/channel.
 
 **Firmware**
+
 The firmware is done using the Arduino IDE and can be compiled with the 2.3.0 or 2.4.0 sdk. It does require some patching of the Arduino make command to allow access to an internal function:
 After downloading the board in arduino, go to *packages/esp8266/hardware/2.3.0/platform.txt* and locate the  *compiler.c.elf.flags* line:
 
