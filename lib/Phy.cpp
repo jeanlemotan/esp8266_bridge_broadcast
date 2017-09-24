@@ -27,8 +27,9 @@ enum SPI_Command : uint16_t
 };
 
 const size_t Phy::MAX_PAYLOAD_SIZE;
-
 static const size_t MAX_PACKET_SIZE = Phy::MAX_PAYLOAD_SIZE + 2; //crc
+
+static const uint32_t COMMAND_DELAY_US = 5000;
 
 
 static const uint16_t s_crc_table[256] =
@@ -288,11 +289,6 @@ bool Phy::send_data(void const* data, size_t size)
     }
 
     uint16_t crc = crc16(0, data, size);
-//    for (size_t i = 0; i < size; i++)
-//    {
-//        printf("%02X,", ((uint8_t const*)data)[i]);
-//    }
-//    std::cout << "\nCRC for size " << std::to_string(size) << " is " << std::to_string(crc) << " \n";
 
     if (m_pigpio_fd >= 0)
     {
@@ -449,11 +445,9 @@ bool Phy::set_rate(Rate rate)
     std::lock_guard<std::mutex> lg(m_mutex);
 
     uint32_t command = (SPI_Command::SPI_CMD_SET_RATE << 24) | static_cast<uint32_t>(rate);
-    if (!send_command(command))
-    {
-        return false;
-    }
-    return true;
+    bool res = send_command(command);
+    gpioDelay(COMMAND_DELAY_US);
+    return res;
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -467,6 +461,7 @@ bool Phy::get_rate(Rate& rate)
     {
         return false;
     }
+    gpioDelay(COMMAND_DELAY_US);
 
     uint32_t status = get_status();
     if ((status >> 24) != SPI_Command::SPI_CMD_GET_RATE)
@@ -492,11 +487,9 @@ bool Phy::set_channel(uint8_t channel)
         return false;
     }
     uint32_t command = (SPI_Command::SPI_CMD_SET_CHANNEL << 24) | channel;
-    if (!send_command(command))
-    {
-        return false;
-    }
-    return true;
+    bool res = send_command(command);
+    gpioDelay(COMMAND_DELAY_US);
+    return res;
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -510,6 +503,7 @@ bool Phy::get_channel(uint8_t& channel)
     {
         return false;
     }
+    gpioDelay(COMMAND_DELAY_US);
 
     uint32_t status = get_status();
     if ((status >> 24) != SPI_Command::SPI_CMD_GET_CHANNEL)
@@ -526,17 +520,11 @@ bool Phy::set_power(float dBm)
 {
     std::lock_guard<std::mutex> lg(m_mutex);
 
-    if (dBm < 0.f || dBm > 20.5f)
-    {
-        return false;
-    }
     uint16_t power = static_cast<uint16_t>(std::max(std::min((dBm * 100.f), 32767.f), -32767.f) + 32767.f);
     uint32_t command = (SPI_Command::SPI_CMD_SET_POWER << 24) | power;
-    if (!send_command(command))
-    {
-        return false;
-    }
-    return true;
+    bool res = send_command(command);
+    gpioDelay(COMMAND_DELAY_US);
+    return res;
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -550,6 +538,7 @@ bool Phy::get_power(float& dBm)
     {
         return false;
     }
+    gpioDelay(COMMAND_DELAY_US);
 
     uint32_t status = get_status();
     if ((status >> 24) != SPI_Command::SPI_CMD_GET_POWER)
@@ -576,6 +565,7 @@ bool Phy::get_stats(Stats& stats)
     {
         return false;
     }
+    gpioDelay(COMMAND_DELAY_US);
 
     {
         std::array<uint8_t, 2 + CHUNK_SIZE> tx = { 0x3, 0x0 };
