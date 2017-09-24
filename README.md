@@ -64,7 +64,7 @@ Then add this at the end of that line: -Wl,-wrap=ppEnqueueRxq
 
 It should read this:
 ```
-compiler.c.elf.flags={compiler.warning_flags} -O3 -nostdlib -Wl,--no-check-sections -u call_user_start -u _printf_float -u _scanf_float -Wl,-static "-L{compiler.sdk.path}/lib" "-L{compiler.sdk.path}/ld" "-L{compiler.libc.path}/lib" "-T{build.flash_ld}" -Wl,--gc-sections -Wl,-wrap,system_restart_local -Wl,-wrap,spi_flash_read **-Wl,-wrap=ppEnqueueRxq**
+compiler.c.elf.flags={compiler.warning_flags} -O3 -nostdlib -Wl,--no-check-sections -u call_user_start -u _printf_float -u _scanf_float -Wl,-static "-L{compiler.sdk.path}/lib" "-L{compiler.sdk.path}/ld" "-L{compiler.libc.path}/lib" "-T{build.flash_ld}" -Wl,--gc-sections -Wl,-wrap,system_restart_local -Wl,-wrap,spi_flash_read -Wl,-wrap=ppEnqueueRxq
 ```
 
 
