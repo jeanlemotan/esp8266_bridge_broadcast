@@ -14,6 +14,10 @@ static constexpr unsigned BLOCK_NUMS[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
                                            10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
                                            21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31 };
 
+const uint8_t Fec_Packer::MAX_CODING_K;
+const uint8_t Fec_Packer::MAX_CODING_N;
+const size_t Fec_Packer::PAYLOAD_OVERHEAD;
+
 #pragma pack(push, 1)
 
 struct Datagram_Header
@@ -26,6 +30,8 @@ struct Datagram_Header
 };
 
 #pragma pack(pop)
+
+static_assert(Fec_Packer::PAYLOAD_OVERHEAD == sizeof(Datagram_Header), "Check the PAYLOAD_OVERHEAD size");
 
 //A     B       C       D       E       F
 //A     Bx      Cx      Dx      Ex      Fx
@@ -131,10 +137,22 @@ Fec_Packer::Fec_Packer()
 
 Fec_Packer::~Fec_Packer()
 {
-    m_exit = true;
-
-    m_impl->tx.datagram_queue_cv.notify_all();
-    m_impl->rx.datagram_queue_cv.notify_all();
+    if (m_is_tx)
+    {
+        {
+            std::lock_guard<std::mutex> lg(m_impl->tx.datagram_queue_mutex);
+            m_exit = true;
+        }
+        m_impl->tx.datagram_queue_cv.notify_all();
+    }
+    else
+    {
+        {
+            std::lock_guard<std::mutex> lg(m_impl->rx.datagram_queue_mutex);
+            m_exit = true;
+        }
+        m_impl->rx.datagram_queue_cv.notify_all();
+    }
 
     if (m_thread.joinable())
     {
@@ -346,34 +364,35 @@ void Fec_Packer::tx_thread_proc()
         {
             //wait for data
             std::unique_lock<std::mutex> lg(tx.datagram_queue_mutex);
-            if (tx.datagram_queue.empty())
+            while (tx.datagram_queue.empty() && !m_exit)
             {
-                tx.datagram_queue_cv.wait(lg, [this, &tx]{ return tx.datagram_queue.empty() == false || m_exit == true; });
+                tx.datagram_queue_cv.wait(lg);
             }
             if (m_exit)
             {
                 break;
             }
 
-            TX::Datagram_ptr datagram;
-            if (!tx.datagram_queue.empty())
+            //consume as many as it can
+            while (!tx.datagram_queue.empty() && tx.block_datagrams.size() < m_coding_k)
             {
-                datagram = tx.datagram_queue.front();
+                TX::Datagram_ptr datagram = tx.datagram_queue.front();
                 tx.datagram_queue.pop_front();
-            }
 
-            if (datagram)
-            {
-                seal_datagram(*datagram, m_datagram_header_offset, tx.last_block_index, tx.block_datagrams.size(), false);
-
-                if (on_tx_data_encoded)
+                if (datagram)
                 {
-                    on_tx_data_encoded(datagram->data.data(), datagram->data.size());
-                }
+                    seal_datagram(*datagram, m_datagram_header_offset, tx.last_block_index, tx.block_datagrams.size(), false);
 
-                tx.block_datagrams.push_back(datagram);
+                    if (on_tx_data_encoded)
+                    {
+                        on_tx_data_encoded(datagram->data.data(), datagram->data.size());
+                    }
+
+                    tx.block_datagrams.push_back(datagram);
+                }
             }
         }
+        tx.datagram_queue_cv.notify_all();
 
         //compute fec datagrams
         if (tx.block_datagrams.size() >= m_coding_k)
@@ -449,14 +468,15 @@ void Fec_Packer::tx_thread_proc()
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-void Fec_Packer::add_tx_packet(void const* _data, size_t size)
+bool Fec_Packer::add_tx_packet(void const* _data, size_t size)
 {
     if (m_exit)
     {
-        return;
+        return false;
     }
 
     TX& tx = m_impl->tx;
+
     TX::Datagram_ptr& datagram = tx.crt_datagram;
 
     uint8_t const* data = reinterpret_cast<uint8_t const*>(_data);
@@ -475,18 +495,44 @@ void Fec_Packer::add_tx_packet(void const* _data, size_t size)
         data += s;
         size -= s;
 
+        bool limit_reached = false;
         if (datagram->data.size() >= m_transport_datagram_size)
         {
             //send the current datagram
             {
                 std::unique_lock<std::mutex> lg(tx.datagram_queue_mutex);
-                tx.datagram_queue.push_back(datagram);
+                if (m_tx_descriptor.blocking)
+                {
+                    while (tx.datagram_queue.size() >= m_tx_descriptor.max_enqueued_packets && !m_exit)
+                    {
+                        tx.datagram_queue_cv.wait(lg);
+                    }
+                    if (m_exit)
+                    {
+                        return false;
+                    }
+                }
+                if (tx.datagram_queue.size() < m_tx_descriptor.max_enqueued_packets)
+                {
+                    tx.datagram_queue.push_back(datagram);
+                }
+                else
+                {
+                    limit_reached = true;
+                }
             }
             datagram = tx.datagram_pool.acquire();
 
             tx.datagram_queue_cv.notify_all();
         }
+
+        if (limit_reached)
+        {
+            return false;
+        }
     }
+
+    return true;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////
@@ -505,9 +551,9 @@ void Fec_Packer::rx_thread_proc()
     while (true)
     {
         std::unique_lock<std::mutex> lg(rx.datagram_queue_mutex);
-        if (rx.datagram_queue.empty())
+        while (rx.datagram_queue.empty() && !m_exit)
         {
-            rx.datagram_queue_cv.wait(lg, [this, &rx]{ return rx.datagram_queue.empty() == false || m_exit == true; });
+            rx.datagram_queue_cv.wait(lg);
         }
         if (m_exit)
         {
