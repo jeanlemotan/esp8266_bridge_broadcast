@@ -68,5 +68,10 @@ compiler.c.elf.flags={compiler.warning_flags} -O3 -nostdlib -Wl,--no-check-secti
 ```
 
 
+References:
+Raw Wifi hacking: https://github.com/ernacktob/esp8266_wifi_raw
+HSPI info: http://www.esp8266.com/viewtopic.php?f=13&t=7247# & http://iot-bits.com/esp32/esp32-spi-register-description/
+PIGPIO: https://github.com/joan2937/pigpio
+FEC: https://github.com/tahoe-lafs/zfec
 
 
