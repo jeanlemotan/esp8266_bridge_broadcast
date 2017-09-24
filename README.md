@@ -23,21 +23,21 @@ There are 2 helper classes in the project:
   - Sending and receiving data packets up to 1376K. Data is sent through the SPI bus in packets of 64 bytes. When receiving you get the RSSI as well, per packet.
   - Changing the power settings, in dBm from 0 to 20.5
   - Changing the rate & modulation. These are the supported ones:
-  	0:  802.11b 1Mbps, CCK modulation
-		1:  802.11b 2Mbps, CCK modulation
-		2:  802.11b 2Mbps, Short Preamble, CCK modulation
-		3:  802.11b 5.5Mbps, CCK modulation
-		4:  802.11b 5.5Mbps, Short Preamble, CCK modulation
-		5:  802.11b 11Mbps, CCK modulation
-		6:  802.11b 11Mbps, Short Preamble, CCK modulation
-		7:  802.11g 6Mbps, ODFM modulation
-		8:  802.11g 9Mbps, ODFM modulation
-		9:  802.11g 12Mbps, ODFM modulation
-		10: 802.11g 18Mbps, ODFM modulation
-		11: 802.11g 24Mbps, ODFM modulation
-		12: 802.11g 36Mbps, ODFM modulation
-		13: 802.11g 48Mbps, ODFM modulation
-		13: 802.11g 56Mbps, ODFM modulation
+  	- 0:  802.11b 1Mbps, CCK modulation
+	- 1:  802.11b 2Mbps, CCK modulation
+	- 2:  802.11b 2Mbps, Short Preamble, CCK modulation
+	- 3:  802.11b 5.5Mbps, CCK modulation
+	- 4:  802.11b 5.5Mbps, Short Preamble, CCK modulation
+	- 5:  802.11b 11Mbps, CCK modulation
+	- 6:  802.11b 11Mbps, Short Preamble, CCK modulation
+	- 7:  802.11g 6Mbps, ODFM modulation
+	- 8:  802.11g 9Mbps, ODFM modulation
+	- 9:  802.11g 12Mbps, ODFM modulation
+	- 10: 802.11g 18Mbps, ODFM modulation
+	- 11: 802.11g 24Mbps, ODFM modulation
+	- 12: 802.11g 36Mbps, ODFM modulation
+	- 13: 802.11g 48Mbps, ODFM modulation
+	- 13: 802.11g 56Mbps, ODFM modulation
   - Changing the channel.*This is broken for now as the radio doesn't seem to react to this setting for some reason.
   - Getting stats from the esp module - like data transfered, packets dropped etc.
 
