@@ -46,8 +46,8 @@ void ICACHE_RAM_ATTR _spi_slave_isr_handler(void *arg)
             _spi_slave_tx_data_cb();
         }
         if((status & SPISRSIS) != 0) {
-            //uint32_t s = SPI1WS;
-            //_spi_slave_tx_status_cb(s);
+            uint32_t s = SPI1WS;
+            _spi_slave_tx_status_cb(s);
         }
         if((status & SPISWSIS) != 0) {
             uint32_t s = SPI1WS;

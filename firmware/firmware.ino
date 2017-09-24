@@ -59,7 +59,7 @@ float s_wlan_power_dBm = 0;
 
 void set_wlan_power_dBm(float dBm)
 {
-  dBm = std::max(std::min(dBm, 20.f), 0.f);
+  dBm = std::max(std::min(dBm, 20.5f), 0.f);
   s_wlan_power_dBm = dBm;
   system_phy_set_max_tpw(static_cast<uint8_t>(dBm * 4.f));
 }
@@ -490,6 +490,7 @@ void spi_on_status_received(uint32_t status)
   if (command == SPI_Command::SPI_CMD_SET_RATE)
   {
     uint32_t rate = status & 0xFFFF;
+    LOG("Setting rate: %d\n", rate);
     if (rate >= sizeof(s_rate_mapping) || wifi_set_user_fixed_rate(FIXED_RATE_MASK_ALL, s_rate_mapping[rate]) != 0)
     {
       LOG("Failed to set rate %d", rate);
@@ -526,6 +527,7 @@ void spi_on_status_received(uint32_t status)
   else if (command == SPI_Command::SPI_CMD_SET_CHANNEL)
   {
     uint32_t channel = status & 0xFFFF;
+    LOG("Setting channel: %d\n", channel);
     if (channel == 0 || channel > 11 || !wifi_set_channel(channel))
     {
       LOG("Cannot set channel %d", channel);
@@ -540,14 +542,15 @@ void spi_on_status_received(uint32_t status)
   else if (command == SPI_Command::SPI_CMD_SET_POWER)
   {
     uint16_t power = status & 0xFFFF;
-    float dBm = (static_cast<float>(power) - 32768.f) / 100.f;
-    system_phy_set_max_tpw (dBm);
+    float dBm = (static_cast<float>(power) - 32767.f) / 100.f;
+    LOG("Setting power: %f\n", dBm);
+    set_wlan_power_dBm (dBm);
   }
   else if (command == SPI_Command::SPI_CMD_GET_POWER)
   {
     float dBm = get_wlan_power_dBm();
     uint16_t power = static_cast<uint16_t>(std::max(std::min((dBm * 100.f), 32767.f), -32767.f) + 32767.f);
-    spi_slave_set_status((SPI_Command::SPI_CMD_GET_CHANNEL << 24) | power);
+    spi_slave_set_status((SPI_Command::SPI_CMD_GET_POWER << 24) | power);
   }
   else if (command == SPI_Command::SPI_CMD_GET_STATS)
   {
@@ -564,9 +567,9 @@ void spi_on_status_received(uint32_t status)
 
 void spi_on_status_sent(uint32_t status)
 {
-//  lock_guard lg;
+  lock_guard lg;
   //LOG("Status sent: %d\n", status);
-//  spi_slave_set_status(0);
+  spi_slave_set_status(0);
 //  s_spi_status_sent++;
 }
 
