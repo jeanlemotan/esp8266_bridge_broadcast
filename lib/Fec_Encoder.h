@@ -7,12 +7,12 @@
 
 struct fec_t;
 
-class Fec_Packer
+class Fec_Encoder
 {
 public:
 
-    Fec_Packer();
-    ~Fec_Packer();
+    Fec_Encoder();
+    ~Fec_Encoder();
 
     typedef std::chrono::high_resolution_clock Clock;
 

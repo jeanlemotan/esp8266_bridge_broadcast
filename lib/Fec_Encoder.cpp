@@ -1,4 +1,4 @@
-#include "Fec_Packer.h"
+#include "Fec_Encoder.h"
 #include <mutex>
 #include <condition_variable>
 #include <deque>
@@ -14,9 +14,9 @@ static constexpr unsigned BLOCK_NUMS[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
                                            10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
                                            21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31 };
 
-const uint8_t Fec_Packer::MAX_CODING_K;
-const uint8_t Fec_Packer::MAX_CODING_N;
-const size_t Fec_Packer::PAYLOAD_OVERHEAD;
+const uint8_t Fec_Encoder::MAX_CODING_K;
+const uint8_t Fec_Encoder::MAX_CODING_N;
+const size_t Fec_Encoder::PAYLOAD_OVERHEAD;
 
 #pragma pack(push, 1)
 
@@ -31,12 +31,12 @@ struct Datagram_Header
 
 #pragma pack(pop)
 
-static_assert(Fec_Packer::PAYLOAD_OVERHEAD == sizeof(Datagram_Header), "Check the PAYLOAD_OVERHEAD size");
+static_assert(Fec_Encoder::PAYLOAD_OVERHEAD == sizeof(Datagram_Header), "Check the PAYLOAD_OVERHEAD size");
 
 //A     B       C       D       E       F
 //A     Bx      Cx      Dx      Ex      Fx
 
-struct Fec_Packer::TX
+struct Fec_Encoder::TX
 {
     struct Datagram
     {
@@ -65,7 +65,7 @@ struct Fec_Packer::TX
 };
 
 
-struct Fec_Packer::RX
+struct Fec_Encoder::RX
 {
     struct Datagram
     {
@@ -105,9 +105,9 @@ struct Fec_Packer::RX
 };
 
 
-static void seal_datagram(Fec_Packer::TX::Datagram& datagram, size_t header_offset, uint32_t block_index, uint8_t datagram_index, bool is_fec)
+static void seal_datagram(Fec_Encoder::TX::Datagram& datagram, size_t header_offset, uint32_t block_index, uint8_t datagram_index, bool is_fec)
 {
-    assert(datagram.data.size() >= header_offset + sizeof(Fec_Packer::TX::Datagram));
+    assert(datagram.data.size() >= header_offset + sizeof(Fec_Encoder::TX::Datagram));
 
     Datagram_Header& header = *reinterpret_cast<Datagram_Header*>(datagram.data.data() + header_offset);
 //    header.crc = 0;
@@ -119,7 +119,7 @@ static void seal_datagram(Fec_Packer::TX::Datagram& datagram, size_t header_offs
 //    header.crc = q::util::murmur_hash(datagram.data.data() + header_offset, header.size, 0);
 }
 
-struct Fec_Packer::Impl
+struct Fec_Encoder::Impl
 {
     size_t tx_packet_header_length = 0;
 
@@ -129,13 +129,13 @@ struct Fec_Packer::Impl
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-Fec_Packer::Fec_Packer()
+Fec_Encoder::Fec_Encoder()
 {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-Fec_Packer::~Fec_Packer()
+Fec_Encoder::~Fec_Encoder()
 {
     if (m_is_tx)
     {
@@ -164,7 +164,7 @@ Fec_Packer::~Fec_Packer()
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-bool Fec_Packer::add_rx_packet(void const* _data, size_t size)
+bool Fec_Encoder::add_rx_packet(void const* _data, size_t size)
 {
     if (m_exit)
     {
@@ -207,7 +207,7 @@ bool Fec_Packer::add_rx_packet(void const* _data, size_t size)
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-bool Fec_Packer::init_tx(TX_Descriptor const& descriptor)
+bool Fec_Encoder::init_tx(TX_Descriptor const& descriptor)
 {
     m_is_tx = true;
 
@@ -221,7 +221,7 @@ bool Fec_Packer::init_tx(TX_Descriptor const& descriptor)
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-bool Fec_Packer::init_rx(RX_Descriptor const& descriptor)
+bool Fec_Encoder::init_rx(RX_Descriptor const& descriptor)
 {
     m_is_tx = false;
 
@@ -235,7 +235,7 @@ bool Fec_Packer::init_rx(RX_Descriptor const& descriptor)
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-bool Fec_Packer::init()
+bool Fec_Encoder::init()
 {
     if (m_coding_k == 0 || m_coding_n < m_coding_k || m_coding_k > m_fec_src_datagram_ptrs.size() || m_coding_n > m_fec_dst_datagram_ptrs.size())
     {
@@ -305,7 +305,7 @@ bool Fec_Packer::init()
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-void Fec_Packer::tx_thread_proc()
+void Fec_Encoder::tx_thread_proc()
 {
     TX& tx = m_impl->tx;
 
@@ -468,7 +468,7 @@ void Fec_Packer::tx_thread_proc()
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-bool Fec_Packer::add_tx_packet(void const* _data, size_t size)
+bool Fec_Encoder::add_tx_packet(void const* _data, size_t size)
 {
     if (m_exit)
     {
@@ -537,14 +537,14 @@ bool Fec_Packer::add_tx_packet(void const* _data, size_t size)
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-size_t Fec_Packer::get_mtu() const
+size_t Fec_Encoder::get_mtu() const
 {
     return m_is_tx ? m_tx_descriptor.mtu : m_rx_descriptor.mtu;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-void Fec_Packer::rx_thread_proc()
+void Fec_Encoder::rx_thread_proc()
 {
     RX& rx = m_impl->rx;
 
