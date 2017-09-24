@@ -288,7 +288,7 @@ int run_fec_benchmark()
 }
 
 
-int run_fec()
+int run_fec(Phy& phy)
 {
     std::cout << "Using FEC K" << std::to_string(s_fec_coding_k) << " / N" << std::to_string(s_fec_coding_n) << "\n";
 
@@ -313,29 +313,6 @@ int run_fec()
     if (!rx.init_rx(rx_descriptor))
     {
         return -1;
-    }
-
-    Phy phy;
-    if (s_use_spi_dev)
-    {
-        std::cout << "SPI dev " << s_spi_dev <<
-                     " @ " << std::to_string(s_spi_speed) <<
-                     "Hz, " << std::to_string(s_spi_delay) << "us delay\n";
-        if (phy.init_dev(s_spi_dev.c_str(), s_spi_speed, s_spi_delay) != Phy::Init_Result::OK)
-        {
-            return -1;
-        }
-    }
-    else
-    {
-        std::cout << "SPI pigpio, port " << std::to_string(s_pigpio_spi_port)
-                  << ", channel " << std::to_string(s_pigpio_spi_channel)
-                  << " @ " << std::to_string(s_spi_speed)
-                  << "Hz, " << std::to_string(s_spi_delay) << "us delay\n";
-        if (phy.init_pigpio(s_pigpio_spi_port, s_pigpio_spi_channel, s_spi_speed, s_spi_delay) != Phy::Init_Result::OK)
-        {
-            return -1;
-        }
     }
 
     tx.on_tx_data_encoded = [&phy](void const* data, size_t size)
@@ -394,32 +371,10 @@ int run_fec()
     return 0;
 }
 
-int run_no_fec()
+int run_no_fec(Phy& phy)
 {
     typedef Fec_Encoder::Clock Clock;
 
-    Phy phy;
-    if (s_use_spi_dev)
-    {
-        std::cout << "SPI dev " << s_spi_dev <<
-                     " @ " << std::to_string(s_spi_speed) <<
-                     "Hz, " << std::to_string(s_spi_delay) << "us delay\n";
-        if (phy.init_dev(s_spi_dev.c_str(), s_spi_speed, s_spi_delay) != Phy::Init_Result::OK)
-        {
-            return -1;
-        }
-    }
-    else
-    {
-        std::cout << "SPI pigpio, port " << std::to_string(s_pigpio_spi_port)
-                  << ", channel " << std::to_string(s_pigpio_spi_channel)
-                  << " @ " << std::to_string(s_spi_speed)
-                  << "Hz, " << std::to_string(s_spi_delay) << "us delay\n";
-        if (phy.init_pigpio(s_pigpio_spi_port, s_pigpio_spi_channel, s_spi_speed, s_spi_delay) != Phy::Init_Result::OK)
-        {
-            return -1;
-        }
-    }
 
     std::array<uint8_t, Phy::MAX_PAYLOAD_SIZE> rx_data;
     size_t rx_data_size = 0;
@@ -510,7 +465,51 @@ int main(int argc, const char* argv[])
         //return run_phy_benchmark();
     }
 
-    result = s_use_fec ? run_fec() : run_no_fec();
+    Phy phy;
+    if (s_use_spi_dev)
+    {
+        std::cout << "SPI\n\tdev " << s_spi_dev <<
+                     " @ " << std::to_string(s_spi_speed) <<
+                     "Hz, " << std::to_string(s_spi_delay) << "us delay\n";
+        if (phy.init_dev(s_spi_dev.c_str(), s_spi_speed, s_spi_delay) != Phy::Init_Result::OK)
+        {
+            return -1;
+        }
+    }
+    else
+    {
+        std::cout << "SPI\n\tpigpio, port " << std::to_string(s_pigpio_spi_port)
+                  << ", channel " << std::to_string(s_pigpio_spi_channel)
+                  << " @ " << std::to_string(s_spi_speed)
+                  << "Hz, " << std::to_string(s_spi_delay) << "us delay\n";
+        if (phy.init_pigpio(s_pigpio_spi_port, s_pigpio_spi_channel, s_spi_speed, s_spi_delay) != Phy::Init_Result::OK)
+        {
+            return -1;
+        }
+    }
+
+    phy.set_rate(s_phy_rate);
+    phy.set_power(s_phy_power);
+    phy.set_channel(s_phy_channel);
+    int actual_rate = -1;
+    float actual_power = -1;
+    int actual_channel = -1;
+    {
+        Phy::Rate rate;
+        actual_rate = phy.get_rate(rate) ? static_cast<int>(rate) : -1;
+        if (!phy.get_power(actual_power))
+        {
+            actual_power = -1;
+        }
+        uint8_t ch;
+        actual_channel = phy.get_channel(ch) ? ch : -1;
+    }
+    std::cout << "PHY\n\tset rate " << std::to_string(static_cast<int>(s_phy_rate)) << ", actual rate " << std::to_string(actual_rate)
+              << "\n\tset power " << std::to_string(s_phy_power) << ", actual power " << std::to_string(actual_power)
+              << "\n\tset channel " << std::to_string(s_phy_channel) << ", actual channel " << std::to_string(actual_channel)
+              << "\n";
+
+    result = s_use_fec ? run_fec(phy) : run_no_fec(phy);
 
     gpioTerminate();
 
