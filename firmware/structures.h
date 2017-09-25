@@ -2,28 +2,34 @@
 
 #include <cassert>
 
-constexpr size_t CHUNK_SIZE = 64;
-
-constexpr size_t HEADER_SIZE = 24;
-constexpr size_t MAX_PAYLOAD_SIZE = 1400 - HEADER_SIZE;
-constexpr size_t MAX_PAYLOAD_SIZE_CHUNK_PADDED = MAX_PAYLOAD_SIZE + 32;
-
-struct WLAN_Packet
+constexpr uint8_t s_packet_header[] =
 {
-  uint32_t storage[(HEADER_SIZE + MAX_PAYLOAD_SIZE_CHUNK_PADDED) / 4];
-  uint8_t* ptr = (uint8_t*)&storage;
-  uint8_t* payload_ptr = ptr + HEADER_SIZE;
+    0x08, 0x01, 0x00, 0x00,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+    0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+    0x10, 0x86
+};
+
+constexpr size_t CHUNK_SIZE = 64;
+constexpr size_t CHUNK_MASK = (CHUNK_SIZE - 1);
+
+constexpr size_t HEADER_SIZE = sizeof(s_packet_header);
+constexpr size_t MAX_PAYLOAD_SIZE = 1400 - HEADER_SIZE;
+
+static_assert(HEADER_SIZE == 24, "");
+
+struct S2W_Packet
+{
+  uint8_t* ptr = nullptr;
+  uint8_t* payload_ptr = nullptr;
   uint16_t size = 0;
   uint16_t offset = 0;
 };
 
-static_assert(MAX_PAYLOAD_SIZE_CHUNK_PADDED % CHUNK_SIZE == 0, "Size is not padded to chunk boundary");
-
-struct SPI_Packet
+struct W2S_Packet
 {
-  uint32_t storage[MAX_PAYLOAD_SIZE / 4 + 1];
-  uint8_t* ptr = (uint8_t*)&storage;
-  uint8_t* payload_ptr = ptr;
+  uint8_t* ptr = nullptr;
   uint16_t size = 0;
   uint16_t offset = 0;
   int8_t rssi = 0;
@@ -31,69 +37,256 @@ struct SPI_Packet
 
 /////////////////////////////////////////////////////////////////////////
 
-constexpr uint8_t MAX_WLAN_PACKET_COUNT = 10;
-WLAN_Packet s_wlan_packets[MAX_WLAN_PACKET_COUNT];
+constexpr size_t W2S_BUFFER_SIZE = 13000;
+alignas(uint32_t) uint8_t s_w2s_buffer[W2S_BUFFER_SIZE];
 
-constexpr uint8_t MAX_SPI_PACKET_COUNT = 6;
-SPI_Packet s_spi_packets[MAX_SPI_PACKET_COUNT];
+constexpr size_t S2W_BUFFER_SIZE = 13000;
+alignas(uint32_t) uint8_t s_s2w_buffer[S2W_BUFFER_SIZE];
 
-template<typename T, size_t N>
+
+template<size_t N>
 struct Queue
 {
-  Queue()
+  Queue(uint8_t* buffer)
+    : m_buffer(buffer)
   {
-    memset(m_packets, 0, sizeof(T*) * N);
+    //memset(m_buffer, 0, N);
   }
 
-  inline uint8_t size() const __attribute__((always_inline))
+  inline size_t size() const
   {
-    return m_size;
+    if (m_read_start == m_write_start)
+    {
+      return 0;
+    }
+    if (m_write_start > m_read_start) //no wrap
+    {
+      return m_write_end - m_read_start;
+    }
+    if (m_write_start < m_read_start) //wrap
+    {
+      return (N - m_read_start) + m_write_end;
+    }
   }
-  inline bool empty() const __attribute__((always_inline))
+
+  inline size_t capacity() const
   {
-    return m_size == 0;
+    return N;
   }
-  inline bool full() const __attribute__((always_inline))
+
+  inline uint8_t* start_writing(size_t size) __attribute__((always_inline))
   {
-    return m_size >= N;
+    if (m_write_start != m_write_end)
+    {
+      return nullptr;
+    }
+    
+    //size_t aligned_size = (size + (CHUNK_SIZE - 1)) & ~CHUNK_MASK; //align the size
+    size_t start = m_write_start;
+    size_t end = start + sizeof(uint32_t) + size;
+    if (end <= N) //no wrap
+    {
+      //check read collisions
+      if (start < m_read_start && end >= m_read_start)
+      {
+//        Serial.printf("\tf1: %d < %d && %d >= %d\n", start, m_read_start, end, m_read_start);
+        return nullptr;
+      }
+
+//      Serial.printf("\tw1: %d, %d, %d, %d\n", start, end, m_read_start, m_read_end);
+      memcpy(m_buffer + start, &size, sizeof(uint32_t)); //write the size before wrapping
+      m_write_end = end;
+      return m_buffer + start + sizeof(uint32_t);
+    }
+    else //wrap
+    {
+      //check read collisions
+      if (m_read_start > start) //if the read offset is between start and the end of the buffer
+      {
+//        Serial.printf("\tf2: %d > %d\n", m_read_start, start);
+        return nullptr;
+      }
+      end = size;
+      //check read collisions
+      if (end >= m_read_start)
+      {
+//        Serial.printf("\tf3: %d >= %d\n", end, m_read_start);
+        return nullptr;
+      }
+
+//      Serial.printf("\tw2: %d, %d, %d, %d\n", start, end, m_read_start, m_read_end);
+      memcpy(m_buffer + m_write_start, &size, sizeof(uint32_t)); //write the size before wrapping
+      m_write_end = end;
+      return m_buffer;
+    }
+  }
+
+  inline void end_writing() __attribute__((always_inline))
+  {
+    m_write_start = m_write_end;
+  }
+  inline void cancel_writing() __attribute__((always_inline))
+  {
+    m_write_end = m_write_start;
+  }
+
+  inline uint8_t* start_reading(size_t& size) __attribute__((always_inline))
+  {
+    if (m_read_start != m_read_end)
+    {
+      return nullptr;
+    }
+    if (m_read_start == m_write_start)
+    {
+//      Serial.printf("\tf4: %d == %d\n", m_read_start, m_write_start);
+      size = 0;
+      return nullptr;
+    }
+    size_t start = m_read_start;
+    memcpy(&size, m_buffer + start, sizeof(uint32_t)); //read the size
+    //size_t aligned_size = (size + (CHUNK_SIZE - 1)) & ~CHUNK_MASK; //align the size
+    size_t end = start + sizeof(uint32_t) + size;
+    if (end <= N)
+    {
+      m_read_end = end;
+      return m_buffer + start + sizeof(uint32_t);
+    }
+    else
+    {
+      m_read_start = 0;
+      m_read_end = size;
+      return m_buffer;
+    }
+  }
+
+  inline void end_reading() __attribute__((always_inline))
+  {
+    m_read_start = m_read_end;
+  }
+  inline void cancel_reading()  __attribute__((always_inline))
+  {
+    m_read_end = m_read_start;
   }
   
-  inline T* pop() __attribute__((always_inline))
-  {
-    if (m_size > 0)
-    {
-      return m_packets[--m_size];
-    }
-    return nullptr;
-  }
-  inline void push(T*& packet) __attribute__((always_inline))
-  {
-//    assert(m_size < N);
-    T* p = packet;
-    packet = nullptr;
-    m_packets[m_size++] = p;
-  }
-
-  inline void push_and_clear(T*& packet) __attribute__((always_inline))
-  {
-//    assert(m_size < N);
-    T* p = packet;
-    packet = nullptr;
-    p->size = 0;
-    p->offset = 0;
-    m_packets[m_size++] = p;
-  }
-
-  T* m_packets[N];
-  uint8_t m_size = 0;
+private:
+  uint8_t* m_buffer = nullptr;
+  size_t m_write_start = 0;
+  size_t m_write_end = 0;
+  size_t m_read_start = 0;
+  size_t m_read_end = 0;
 };
 
-Queue<WLAN_Packet, MAX_WLAN_PACKET_COUNT> s_wlan_free_queue;
-Queue<WLAN_Packet, MAX_WLAN_PACKET_COUNT> s_wlan_to_send_queue;
+////////////////////////////////////////////////////////////////////////////////////
 
-Queue<SPI_Packet, MAX_SPI_PACKET_COUNT> s_spi_free_queue;
-Queue<SPI_Packet, MAX_SPI_PACKET_COUNT> s_spi_to_send_queue;
+Queue<W2S_BUFFER_SIZE> s_w2s_queue(s_w2s_buffer);
+Queue<S2W_BUFFER_SIZE> s_s2w_queue(s_s2w_buffer);
 
+////////////////////////////////////////////////////////////////////////////////////
+
+bool start_writing_s2w_packet(S2W_Packet& packet, size_t size)
+{
+  size_t real_size = HEADER_SIZE + size;
+  uint8_t* buffer = s_s2w_queue.start_writing(real_size);
+  if (!buffer)
+  {
+    packet.ptr = nullptr;
+    return false;
+  }
+  packet.offset = 0;
+  packet.size = size;
+  packet.ptr = buffer;
+  packet.payload_ptr = buffer + HEADER_SIZE;
+  return true;
+}
+void end_writing_s2w_packet(S2W_Packet& packet)
+{
+  s_s2w_queue.end_writing();
+  packet.ptr = nullptr;
+}
+void cancel_writing_s2w_packet(S2W_Packet& packet)
+{
+  s_s2w_queue.cancel_writing();
+  packet.ptr = nullptr;
+}
+
+bool start_reading_s2w_packet(S2W_Packet& packet)
+{
+  size_t real_size = 0;
+  uint8_t* buffer = s_s2w_queue.start_reading(real_size);
+  if (!buffer)
+  {
+    packet.ptr = nullptr;
+    return false;
+  }
+  packet.offset = 0;
+  packet.size = real_size - HEADER_SIZE;
+  packet.ptr = buffer;
+  packet.payload_ptr = buffer + HEADER_SIZE;
+  return true;
+}
+void end_reading_s2w_packet(S2W_Packet& packet)
+{
+  s_s2w_queue.end_reading();
+  packet.ptr = nullptr;
+}
+void cancel_reading_s2w_packet(S2W_Packet& packet)
+{
+  s_s2w_queue.cancel_reading();
+  packet.ptr = nullptr;
+}
+
+////////////////////////////////////////////////////////////////////////////////////
+
+bool start_writing_w2s_packet(W2S_Packet& packet, size_t size)
+{
+  uint8_t* buffer = s_w2s_queue.start_writing(size);
+  if (!buffer)
+  {
+    packet.ptr = nullptr;
+    return false;
+  }
+  packet.offset = 0;
+  packet.size = size;
+  packet.ptr = buffer;
+  return true;
+}
+void end_writing_w2s_packet(W2S_Packet& packet)
+{
+  s_w2s_queue.end_writing();
+  packet.ptr = nullptr;
+}
+void cancel_writing_w2s_packet(W2S_Packet& packet)
+{
+  s_w2s_queue.cancel_writing();
+  packet.ptr = nullptr;
+}
+
+bool start_reading_w2s_packet(W2S_Packet& packet)
+{
+  size_t size = 0;
+  uint8_t* buffer = s_w2s_queue.start_reading(size);
+  if (!buffer)
+  {
+    packet.ptr = nullptr;
+    return false;
+  }
+  packet.offset = 0;
+  packet.size = size;
+  packet.ptr = buffer;
+  return true;
+}
+void end_reading_w2s_packet(W2S_Packet& packet)
+{
+  s_w2s_queue.end_reading();
+  packet.ptr = nullptr;
+}
+void cancel_reading_w2s_packet(W2S_Packet& packet)
+{
+  s_w2s_queue.cancel_reading();
+  packet.ptr = nullptr;
+}
+
+////////////////////////////////////////////////////////////////////////////////////
 
 struct lock_guard
 {

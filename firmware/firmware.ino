@@ -35,15 +35,6 @@ static constexpr uint8_t s_rate_mapping[15] =
 
 static constexpr uint8_t s_filtered_mac[] = { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, };
 
-static constexpr uint8_t s_packet_header[HEADER_SIZE] =
-{
-    0x08, 0x01, 0x00, 0x00,
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-    0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
-    0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
-    0x10, 0x86
-};
-
 /////////////////////////////////////////////////////////////////////////
 
 static int s_uart_verbose = 0;
@@ -54,7 +45,7 @@ static int s_uart_error_count = 0;
 
 /////////////////////////////////////////////////////////////////////////
 
-WLAN_Packet* s_wlan_packet = nullptr;
+S2W_Packet s_wlan_packet;
 float s_wlan_power_dBm = 0;
 
 void set_wlan_power_dBm(float dBm)
@@ -74,21 +65,22 @@ void packet_sent_cb(uint8 status)
   {
     lock_guard lg;
   
-    if (s_wlan_packet)
+    if (s_wlan_packet.ptr)
     {
       if (status == 0)
       {
         //int dt = micros() - s_send_start_time;
         //s_send_max_time = std::max(s_send_max_time, dt);
         //s_send_min_time = std::min(s_send_min_time, dt);
-        s_stats.wlan_data_sent += s_wlan_packet->size;
+        s_stats.wlan_data_sent += s_wlan_packet.size + HEADER_SIZE;
       }
       else
       {
         LOG("WLAN send error");
         s_stats.wlan_error_count++;
       }
-      s_wlan_free_queue.push_and_clear(s_wlan_packet);
+      end_reading_s2w_packet(s_wlan_packet);
+      //xxx s_wlan_free_queue.push_and_clear(s_wlan_packet);
     }
     else
     {
@@ -137,21 +129,24 @@ void packet_received_cb(struct RxPacket *pkt)
     }
   }
 
-  SPI_Packet* p = nullptr;
+  size_t size = std::min<size_t>(len, MAX_PAYLOAD_SIZE);
+
+  uint8_t* buffer = nullptr;
   {
     lock_guard lg;
-    p = s_spi_free_queue.pop();
+    buffer = s_w2s_queue.start_writing(size);
+    //xxx p = s_spi_free_queue.pop();
   }
   
-  if (p)
+  if (buffer)
   {
-    memcpy(p->payload_ptr, data, std::min<size_t>(len, MAX_PAYLOAD_SIZE));
-    p->size = len;
-    p->rssi = rssi;
+    memcpy(buffer, data, size);
+    //p->rssi = rssi;
     
     {
       lock_guard lg;
-      s_spi_to_send_queue.push(p);
+      s_w2s_queue.end_writing();
+      //xxx s_spi_to_send_queue.push(p);
     }
   }
   else
@@ -163,7 +158,7 @@ void packet_received_cb(struct RxPacket *pkt)
 
 /////////////////////////////////////////////////////////////////////////
 
-WLAN_Packet* s_uart_packet = nullptr;
+S2W_Packet s_uart_packet;
 
 void ICACHE_FLASH_ATTR parse_command()
 {
@@ -197,11 +192,11 @@ void ICACHE_FLASH_ATTR parse_command()
   }
   else if (s_uart_command == 'S')
   {
-    if (!s_uart_packet)
+    if (!s_uart_packet.ptr)
     {
-      s_uart_packet = s_wlan_free_queue.pop();
+      //xxx s_uart_packet = s_wlan_free_queue.pop();
     }
-    if (!s_uart_packet)
+    if (!s_uart_packet.ptr)
     {
       LOG("Sending failed: previous packet still in flight\n");
       s_uart_command = 0;
@@ -213,24 +208,24 @@ void ICACHE_FLASH_ATTR parse_command()
       char ch = Serial.read();
       if (ch == '\n')
       {
-        s_uart_packet->size = s_uart_packet->offset;
-        LOG("Sending packet of size %d\n", s_uart_packet->size);
-        s_wlan_to_send_queue.push(s_uart_packet);
+        s_uart_packet.size = s_uart_packet.offset;
+        LOG("Sending packet of size %d\n", s_uart_packet.size);
+        //xxx s_wlan_to_send_queue.push(s_uart_packet);
         s_uart_command = 0;
       }
       else
       {
-        if (s_uart_packet->offset >= MAX_PAYLOAD_SIZE)
+        if (s_uart_packet.offset >= MAX_PAYLOAD_SIZE)
         {
           while (available-- > 0) Serial.read();
-          LOG("Packet too big: %d > %d\n", s_uart_packet->offset + 1, MAX_PAYLOAD_SIZE);
-          s_wlan_free_queue.push_and_clear(s_uart_packet);
+          LOG("Packet too big: %d > %d\n", s_uart_packet.offset + 1, MAX_PAYLOAD_SIZE);
+          //xxx s_wlan_free_queue.push_and_clear(s_uart_packet);
           
           s_uart_command = 0;
           s_uart_error_count++;
           return;
         }
-        s_uart_packet->payload_ptr[s_uart_packet->offset++] = ch;
+        //s_uart_packet->payload_ptr[s_uart_packet->offset++] = ch;
       }
     }
   }
@@ -328,8 +323,8 @@ void ICACHE_FLASH_ATTR parse_command()
 
 /////////////////////////////////////////////////////////////////////////
 
-WLAN_Packet* s_spi_incoming_packet = nullptr;
-SPI_Packet* s_spi_outgoing_packet = nullptr;
+S2W_Packet s_spi_incoming_packet;
+W2S_Packet s_spi_outgoing_packet;
 
 enum SPI_Command : uint16_t
 {
@@ -344,27 +339,37 @@ enum SPI_Command : uint16_t
     SPI_CMD_GET_STATS = 9,
 };
 
+uint32_t s_spi_temp_buffer[16];
+
 void spi_on_data_received()
 {
   lock_guard lg;
   
-  if (s_spi_incoming_packet)
+  if (s_spi_incoming_packet.ptr)
   {
-    uint32_t poffset = s_spi_incoming_packet->offset;
-    uint32_t psize = s_spi_incoming_packet->size;
-    
-    spi_slave_get_data((uint32_t*)(s_spi_incoming_packet->payload_ptr + poffset));
+    uint32_t poffset = s_spi_incoming_packet.offset;
+    uint32_t psize = s_spi_incoming_packet.size;
 
     uint32_t size = psize - poffset;
     if (size > CHUNK_SIZE)
     {
       size = CHUNK_SIZE;
     }
-    s_spi_incoming_packet->offset += size;
-    if (s_spi_incoming_packet->offset >= psize)
+    
+    if (size == CHUNK_SIZE && ((size_t)(s_spi_incoming_packet.payload_ptr + poffset) & 3) == 0)
     {
-      s_wlan_to_send_queue.push(s_spi_incoming_packet);
-      //s_wlan_free_queue.push_and_clear(s_spi_incoming_packet);
+      spi_slave_get_data((uint32_t*)(s_spi_incoming_packet.payload_ptr + poffset));
+    }
+    else
+    {
+      spi_slave_get_data(s_spi_temp_buffer);
+      memcpy(s_spi_incoming_packet.payload_ptr + poffset, s_spi_temp_buffer, size);
+    }
+    
+    s_spi_incoming_packet.offset += size;
+    if (s_spi_incoming_packet.offset >= psize)
+    {
+      end_writing_s2w_packet(s_spi_incoming_packet);
       //s_stats.spi_packets_received++;
     }
     s_stats.spi_data_received += size;
@@ -380,24 +385,34 @@ void spi_on_data_sent()
 {
   lock_guard lg;
   
-  if (s_spi_outgoing_packet)
+  if (s_spi_outgoing_packet.ptr)
   {
-    uint32_t psize = s_spi_outgoing_packet->size;
-    uint32_t size = psize - s_spi_outgoing_packet->offset;
+    uint32_t psize = s_spi_outgoing_packet.size;
+    uint32_t size = psize - s_spi_outgoing_packet.offset;
     if (size > CHUNK_SIZE)
     {
       size = CHUNK_SIZE;
     }
-    s_spi_outgoing_packet->offset += size;
-    if (s_spi_outgoing_packet->offset >= psize)
+    s_spi_outgoing_packet.offset += size;
+    if (s_spi_outgoing_packet.offset >= psize)
     {
-      s_spi_free_queue.push_and_clear(s_spi_outgoing_packet);
+      end_reading_w2s_packet(s_spi_outgoing_packet);
+      //xxx s_spi_free_queue.push_and_clear(s_spi_outgoing_packet);
       //s_spi_packets_sent++;
     }
     else
     {
+      size_t poffset = s_spi_outgoing_packet.offset;
       //prepare next transfer
-      spi_slave_set_data((uint32_t*)(s_spi_outgoing_packet->payload_ptr + s_spi_outgoing_packet->offset));
+      if (size == CHUNK_SIZE && ((size_t)(s_spi_outgoing_packet.ptr + poffset) & 3) == 0)
+      {
+        spi_slave_set_data((uint32_t*)(s_spi_outgoing_packet.ptr + poffset));
+      }
+      else
+      {
+        memcpy(s_spi_temp_buffer, s_spi_outgoing_packet.ptr + poffset, size);
+        spi_slave_set_data(s_spi_temp_buffer);
+      }
     }
 
     s_stats.spi_data_sent += size;
@@ -417,60 +432,66 @@ void spi_on_status_received(uint32_t status)
   SPI_Command command = (SPI_Command)(status >> 24);
   if (command == SPI_Command::SPI_CMD_SEND_PACKET)
   {
-    if (!s_spi_incoming_packet)
+    uint32_t size = status & 0xFFFF;
+    if (size > MAX_PAYLOAD_SIZE)
     {
-      s_spi_incoming_packet = s_wlan_free_queue.pop();
-    }
-    if (s_spi_incoming_packet)
-    {
-      uint32_t size = status & 0xFFFF;
-      if (size <= MAX_PAYLOAD_SIZE)
-      {
-        s_spi_incoming_packet->size = size;
-      }
-      else
-      {
-        s_wlan_free_queue.push_and_clear(s_spi_incoming_packet);
-        s_stats.spi_error_count++;
-        LOG("Packet too big: %d\n", size);
-      }
+      s_stats.spi_error_count++;
+      LOG("Packet too big: %d\n", size);
     }
     else
     {
-      s_stats.spi_error_count++;
-      s_stats.spi_received_packets_dropped++;
-      //Serial.printf("Not ready to send\n");
+      if (!s_spi_incoming_packet.ptr)
+      {
+        start_writing_s2w_packet(s_spi_incoming_packet, size);
+        //xxx s_spi_incoming_packet = s_wlan_free_queue.pop();
+        if (!s_spi_incoming_packet.ptr)
+        {
+          s_stats.spi_error_count++;
+          s_stats.spi_received_packets_dropped++;
+          //Serial.printf("Not ready to send\n");
+        }
+      }
     }
     return;
   }
   else
   {
-    if (s_spi_outgoing_packet)
+    if (s_spi_outgoing_packet.ptr)
     {
-      LOG("SPI outgoing packet interrupted by %d, offset %d, size %d\n", command, s_spi_outgoing_packet->offset, s_spi_outgoing_packet->size);
-      s_spi_free_queue.push_and_clear(s_spi_outgoing_packet); //cancel the outgoing one
+      LOG("SPI outgoing packet interrupted by %d, offset %d, size %d\n", command, s_spi_outgoing_packet.offset, s_spi_outgoing_packet.size);
+      cancel_reading_w2s_packet(s_spi_outgoing_packet);
+      //xxx s_spi_free_queue.push_and_clear(s_spi_outgoing_packet); //cancel the outgoing one
     }
   }
   
   if (command == SPI_Command::SPI_CMD_GET_PACKET)
   {
-    if (!s_spi_outgoing_packet)
+    if (!s_spi_outgoing_packet.ptr)
     {
-      s_spi_outgoing_packet = s_spi_to_send_queue.pop();
-    }
-    //discard empty packets
-    if (s_spi_outgoing_packet && s_spi_outgoing_packet->size == 0)
-    {
-      s_spi_free_queue.push_and_clear(s_spi_outgoing_packet);
+      start_reading_w2s_packet(s_spi_outgoing_packet);
+      //xxx s_spi_outgoing_packet = s_spi_to_send_queue.pop();
     }
     
-    if (s_spi_outgoing_packet)
+    if (s_spi_outgoing_packet.ptr)
     {
-      uint32_t size = s_spi_outgoing_packet->size & 0xFFFF;
-      uint32_t rssi = *reinterpret_cast<uint8_t*>(&s_spi_outgoing_packet->rssi) & 0xFF;
+      uint32_t size = s_spi_outgoing_packet.size & 0xFFFF;
+      uint32_t rssi = 0;//*reinterpret_cast<uint8_t*>(&s_spi_outgoing_packet->rssi) & 0xFF;
       uint32_t status = (uint32_t(SPI_Command::SPI_CMD_GET_PACKET) << 24) | (rssi << 16) | size;
       spi_slave_set_status(status);
-      spi_slave_set_data((uint32_t*)(s_spi_outgoing_packet->payload_ptr));
+
+      if (size > CHUNK_SIZE)
+      {
+        size = CHUNK_SIZE;
+      }
+      if (size == CHUNK_SIZE && ((size_t)(s_spi_outgoing_packet.ptr) & 3) == 0)
+      {
+        spi_slave_set_data((uint32_t*)(s_spi_outgoing_packet.ptr));
+      }
+      else
+      {
+        memcpy(s_spi_temp_buffer, s_spi_outgoing_packet.ptr, size);
+        spi_slave_set_data(s_spi_temp_buffer);
+      }
     }
     else
     {
@@ -480,10 +501,11 @@ void spi_on_status_received(uint32_t status)
   }
   else
   {
-    if (s_spi_incoming_packet)
+    if (s_spi_incoming_packet.ptr)
     {
       LOG("SPI incoming packet interrupted by %d\n", command);
-      s_wlan_free_queue.push_and_clear(s_spi_incoming_packet); //cancel the incoming one
+      cancel_writing_s2w_packet(s_spi_incoming_packet);
+      //xxx s_wlan_free_queue.push_and_clear(s_spi_incoming_packet); //cancel the incoming one
     }
   }
   
@@ -577,22 +599,59 @@ void spi_on_status_sent(uint32_t status)
 
 void setup() 
 {
-  for (uint8_t i = 0; i < MAX_WLAN_PACKET_COUNT; i++)
-  {
-    WLAN_Packet* packet = &s_wlan_packets[i];
-    memcpy(packet->ptr, s_packet_header, HEADER_SIZE);
-    s_wlan_free_queue.push_and_clear(packet);
-  }
-  for (uint8_t i = 0; i < MAX_SPI_PACKET_COUNT; i++)
-  {
-    SPI_Packet* packet = &s_spi_packets[i];
-    s_spi_free_queue.push_and_clear(packet);
-  }
-
-  //memset(s_packet_payload_ptr, 'A', MAX_PAYLOAD_SIZE);
-
   Serial.begin(115200);
   Serial.setTimeout(999999);
+
+  srand(millis());
+
+/*  auto& queue = s_spi_to_wlan_queue;
+
+  while (1)
+  {
+    uint8_t counter = 0;
+    while (1)
+    {
+      size_t size = rand() % 1500 + 10;
+//      Serial.printf("%d: Start writing %d...", (int)counter, size);
+      uint8_t* buffer = queue.start_writing(size);
+      if (!buffer)
+      {
+//        Serial.printf("failed\n");
+        break;
+      }
+//      Serial.printf("ok\n");
+      memset(buffer, counter, size);
+      queue.end_writing();
+      counter++;
+    }
+
+    counter = 0;
+    while (1)
+    {
+      size_t size = 0;;
+//      Serial.printf("%d: Start reading...", (int)counter);
+      uint8_t* buffer = queue.start_reading(size);
+      if (!buffer)
+      {
+//        Serial.printf("failed\n");
+        break;
+      }
+//      Serial.printf("ok, size %d\n", size);
+      for (size_t i = 0; i < size; i++)
+      {
+        if (buffer[i] != counter)
+        {
+          Serial.printf("corruption @ %d, expected %d, got %d\n", i, (int)counter, (int)buffer[i]);
+          break;
+        }
+      }
+      queue.end_reading();
+      counter++;
+    }
+    delay(1);
+  }
+*/
+  
 
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
@@ -600,14 +659,7 @@ void setup()
   bool ok = false;
   int res = 0;
 
-//  system_phy_set_powerup_option(3);  // Do full RF calibration on power-up
   set_wlan_power_dBm(20.5f);
-
-//  ok = wifi_set_macaddr(SOFTAP_IF, my_mac);
-//  Serial.printf("wifi_set_macaddr: %d\n", ok ? 1 : 0);
-
-//  ok = wifi_wps_disable();
-//  Serial.printf("wifi_wps_disable: %d\n", ok ? 1 : 0);
   
   //ok = wifi_set_opmode(STATION_MODE);
   if (!wifi_set_opmode(SOFTAP_MODE))
@@ -649,22 +701,24 @@ void loop()
 {
   parse_command();
 
-  if (!s_wlan_packet)
+  if (!s_wlan_packet.ptr)
   {
-    WLAN_Packet* p = nullptr;
+    S2W_Packet p;
     {
       lock_guard lg;
-      if (!s_wlan_packet)
+      if (!s_wlan_packet.ptr)
       {
-        s_wlan_packet = s_wlan_to_send_queue.pop();
+        start_reading_s2w_packet(s_wlan_packet);
+        p = s_wlan_packet;
+        //xxx s_wlan_packet = s_wlan_to_send_queue.pop();
       }
-      p = s_wlan_packet;
     }
     
-    if (p)
+    if (p.ptr)
     {
       digitalWrite(LED_BUILTIN, LOW);
-      wifi_send_pkt_freedom(p->ptr, HEADER_SIZE + p->size, 0);   
+      memcpy(p.ptr, s_packet_header, HEADER_SIZE);
+      wifi_send_pkt_freedom(p.ptr, HEADER_SIZE + p.size, 0);   
 //      lock_guard lg;
 //      s_wlan_free_queue.push_and_clear(s_wlan_packet);
 
@@ -674,10 +728,10 @@ void loop()
   if (s_uart_verbose > 0 && millis() - s_stats_last_tp >= 1000)
   {
     s_stats_last_tp = millis();
-    //Serial.printf("Sent: %d bytes ec:%d, Received: %d bytes, SPI SS: %d, SPI SR: %d, SPI DS: %d, SPI DR: %d, SPI ERR: %d, SPI PD: %d\n", s_sent, s_send_error_count, s_received, s_spi_status_sent, s_spi_status_received, s_spi_data_sent, s_spi_data_received, s_spi_error_count, s_spi_packets_dropped);
-    Serial.printf("WLAN S: %d, R: %d, E: %d, D: %d, QE: %d, QF: %d  SPI S: %d, R: %d, E: %d, D: %d, QE: %d, QF: %d\n", 
-      s_stats.wlan_data_sent, s_stats.wlan_data_received, s_stats.wlan_error_count, s_stats.wlan_received_packets_dropped, s_wlan_free_queue.size(), s_wlan_to_send_queue.size(),
-      s_stats.spi_data_sent, s_stats.spi_data_received, s_stats.spi_error_count, s_stats.spi_received_packets_dropped, s_spi_free_queue.size(), s_spi_to_send_queue.size());
+//    Serial.printf("Sent: %d bytes ec:%d, Received: %d bytes, SPI SS: %d, SPI SR: %d, SPI DS: %d, SPI DR: %d, SPI ERR: %d, SPI PD: %d\n", s_sent, s_send_error_count, s_received, s_spi_status_sent, s_spi_status_received, s_spi_data_sent, s_spi_data_received, s_spi_error_count, s_spi_packets_dropped);
+    Serial.printf("WLAN S: %d, R: %d, E: %d, D: %d, %%: %d  SPI S: %d, R: %d, E: %d, D: %d, %%: %d\n", 
+      s_stats.wlan_data_sent, s_stats.wlan_data_received, s_stats.wlan_error_count, s_stats.wlan_received_packets_dropped, s_s2w_queue.size() * 100 / s_s2w_queue.capacity(),
+      s_stats.spi_data_sent, s_stats.spi_data_received, s_stats.spi_error_count, s_stats.spi_received_packets_dropped, s_w2s_queue.size() * 100 / s_w2s_queue.capacity());
 
     s_stats = Stats();
 
