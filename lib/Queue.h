@@ -1,84 +1,239 @@
 #pragma once
 
 #include <deque>
-#include <map>
 #include <vector>
 #include <atomic>
 #include <mutex>
+#include <condition_variable>
 #include <memory>
-#include <functional>
 #include <cassert>
 
-template<class T> struct Pool
+template<typename T> class Queue
 {
-    std::function<void(T&)> on_acquire;
-    std::function<void(T&)> on_release;
+public:
+    Queue(size_t max_size, bool blocking_push, bool blocking_pop);
+    ~Queue();
 
-    typedef std::shared_ptr<T> Ptr;
-    Pool();
-    Ptr acquire();
+    void exit();
+
+    bool push_back(T const& t);
+    bool push_back(T const& t, bool block);
+    bool push_back_timeout(T const& t, std::chrono::high_resolution_clock::duration timeout);
+
+    bool pop_front(T& dst);
+    bool pop_front(std::vector<T>& dst, size_t max);
+
+    bool pop_front(T& dst, bool block);
+    bool pop_front(std::vector<T>& dst, size_t max, bool block);
+
+    bool pop_front_timeout(T& dst, std::chrono::high_resolution_clock::duration timeout);
+    bool pop_front_timeout(std::vector<T>& dst, size_t max, std::chrono::high_resolution_clock::duration timeout);
 
 private:
-    std::function<void(T*)> m_garbage_collector;
-    struct Items
-    {
-        ////
-        std::mutex mutex;
-        std::vector<std::unique_ptr<T>> items;
-        ////
-    };
-    std::shared_ptr<Items> m_pool;
+    bool _push_back(T const& t, bool block, std::chrono::high_resolution_clock::duration* timeout);
+    bool _pop_front(T& dst, bool block, std::chrono::high_resolution_clock::duration* timeout);
+    bool _pop_front(std::vector<T>& dst, size_t max, bool block, std::chrono::high_resolution_clock::duration* timeout);
 
-    int x_reused = 0;
-    int x_new = 0;
-    int x_returned = 0;
+    std::mutex m_mutex;
+    std::condition_variable m_cv;
+    std::deque<T> m_queue;
+    size_t m_max_size = 10;
+    bool m_blocking_push = true;
+    bool m_blocking_pop = true;
+    bool m_exit = false;
 };
 
 
-template<class T> Pool<T>::Pool()
+template<class T>
+Queue<T>::Queue(size_t max_size, bool blocking_push, bool blocking_pop)
+    : m_max_size(max_size)
+    , m_blocking_push(blocking_push)
+    , m_blocking_pop(blocking_pop)
 {
-    m_pool = std::make_shared<Items>();
-
-    auto items_ref = m_pool;
-    m_garbage_collector = [items_ref, this](T* t)
-    {
-        x_returned++;
-        if (on_release)
-        {
-            on_release(*t);
-        }
-
-        std::lock_guard<std::mutex> lg(items_ref->mutex);
-        items_ref->items.emplace_back(static_cast<T*>(t)); //will create a unique pointer from the raw one
-//        printf("%d// new:%d reused:%d returned:%d\n", m_pool.get(), x_new, x_reused, x_returned);
-    };
 }
 
-template<class T> auto Pool<T>::acquire() -> Ptr
+template<class T>
+Queue<T>::~Queue()
 {
-    //this will be called when the last shared_ptr to T dies. We can safetly return the object to pur pool
+    exit();
+}
 
-    std::lock_guard<std::mutex> lg(m_pool->mutex);
-    T* item = nullptr;
-    if (!m_pool->items.empty())
+template<class T>
+void Queue<T>::exit()
+{
     {
-        x_reused++;
-        item = m_pool->items.back().release(); //release the raw ptr from the control of the unique ptr
-        m_pool->items.pop_back();
-//        printf("%d// new:%d reused:%d returned:%d\n", m_pool.get(), x_new, x_reused, x_returned);
+        std::unique_lock<std::mutex> lg(m_mutex);
+        m_exit = true;
     }
-    else
-    {
-        x_new++;
-        item = new T;
-//        printf("%d// new:%d reused:%d returned:%d\n", m_pool.get(), x_new, x_reused, x_returned);
-    }
-    assert(item);
+    m_cv.notify_all();
+}
 
-    if (on_acquire)
-    {
-        on_acquire(static_cast<T&>(*item));
-    }
+template<class T>
+bool Queue<T>::push_back(T const& dst)
+{
+    return _push_back(dst, m_blocking_push, nullptr);
+}
 
-    return Ptr(item, [this](T* item) { m_garbage_collector(item); });
+template<class T>
+bool Queue<T>::push_back(T const& dst, bool block)
+{
+    return _push_back(dst, block, nullptr);
+}
+
+template<class T>
+bool Queue<T>::push_back_timeout(T const& dst, std::chrono::high_resolution_clock::duration timeout)
+{
+    return _push_back(dst, true, &timeout);
+}
+
+template<typename T>
+bool Queue<T>::pop_front(std::vector<T>& dst, size_t max)
+{
+    return _pop_front(dst, max, m_blocking_pop, nullptr);
+}
+
+template<typename T>
+bool Queue<T>::pop_front(T& dst)
+{
+    return _pop_front(dst, m_blocking_pop, nullptr);
+}
+
+template<typename T>
+bool Queue<T>::pop_front(T& dst, bool block)
+{
+    return _pop_front(dst, block, nullptr);
+}
+
+template<typename T>
+bool Queue<T>::pop_front_timeout(std::vector<T>& dst, size_t max, std::chrono::high_resolution_clock::duration timeout)
+{
+    return _pop_front(dst, max, true, &timeout);
+}
+
+template<typename T>
+bool Queue<T>::pop_front_timeout(T& dst, std::chrono::high_resolution_clock::duration timeout)
+{
+    return _pop_front(dst, true, &timeout);
+}
+
+template<class T>
+bool Queue<T>::_push_back(T const& t, bool block, std::chrono::high_resolution_clock::duration* timeout)
+{
+    bool pushed_one = false;
+    //send the current datagram
+    {
+        std::unique_lock<std::mutex> lg(m_mutex);
+        if (block)
+        {
+            while (m_queue.size() >= m_max_size && !m_exit)
+            {
+                if (timeout)
+                {
+                    m_cv.wait_for(lg, *timeout);
+                }
+                else
+                {
+                    m_cv.wait(lg);
+                }
+            }
+            if (m_exit)
+            {
+                return false;
+            }
+        }
+        if (m_queue.size() < m_max_size)
+        {
+            pushed_one = true;
+            m_queue.push_back(t);
+        }
+    }
+    if (pushed_one)
+    {
+        m_cv.notify_all();
+    }
+    return pushed_one;
+}
+
+template<typename T>
+bool Queue<T>::_pop_front(std::vector<T>& dst, size_t max, bool block, std::chrono::high_resolution_clock::duration* timeout)
+{
+    bool got_some = false;
+    {
+        //wait for data
+        std::unique_lock<std::mutex> lg(m_mutex);
+        if (block)
+        {
+            while (m_queue.empty() && !m_exit)
+            {
+                if (timeout)
+                {
+                    m_cv.wait_for(lg, *timeout);
+                }
+                else
+                {
+                    m_cv.wait(lg);
+                }
+            }
+            if (m_exit)
+            {
+                return false;
+            }
+        }
+
+        while (!m_queue.empty())
+        {
+            if (dst.size() >= max)
+            {
+                break;
+            }
+            got_some = true;
+            dst.push_back(std::move(m_queue.front()));
+            m_queue.pop_front();
+        }
+    }
+    if (got_some)
+    {
+        m_cv.notify_all();
+    }
+    return got_some;
+}
+
+template<typename T>
+bool Queue<T>::_pop_front(T& dst, bool block, std::chrono::high_resolution_clock::duration* timeout)
+{
+    bool got_some = false;
+    {
+        //wait for data
+        std::unique_lock<std::mutex> lg(m_mutex);
+        if (block)
+        {
+            while (m_queue.empty() && !m_exit)
+            {
+                if (timeout)
+                {
+                    m_cv.wait_for(lg, *timeout);
+                }
+                else
+                {
+                    m_cv.wait(lg);
+                }
+            }
+            if (m_exit)
+            {
+                return false;
+            }
+        }
+
+        if (!m_queue.empty())
+        {
+            got_some = true;
+            dst = std::move(m_queue.front());
+            m_queue.pop_front();
+        }
+    }
+    if (got_some)
+    {
+        m_cv.notify_all();
+    }
+    return got_some;
 }
