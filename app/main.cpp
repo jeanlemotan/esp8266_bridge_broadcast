@@ -32,10 +32,19 @@ Phy::Rate s_phy_rate = Phy::Rate::RATE_B_5_5M_CCK;
 float s_phy_power = 20.5f;
 uint8_t s_phy_channel = 1;
 
+/* This prints an "Assertion failed" message and aborts.  */
+void __assert_fail(const char *__assertion, const char *__file, unsigned int __line, const char *__function)
+{
+    printf("assert: %s:%d: %s: %s", __file, __line, __function, __assertion);
+    fflush(stdout);
+//    abort();
+}
+
 void show_help()
 {
     std::cout << "Esp8266 Broadcast with FEC support\n";
     std::cout << "Usage:\n";
+    std::cout << "\t--hrlp\tShows this help message\n";
     std::cout << "\t--fec-benchmark\tRuns a FEC benchmark\n";
     std::cout << "\t--phy-benchmark\tRuns a PHY bandwidth benchmark\n";
     std::cout << "\t--verbose\tPrint out the settings\n";
@@ -74,7 +83,12 @@ int parse_arguments(int argc, const char* argv[])
         int remanining = argc - i - 1;
 
         std::string arg(argv[i]);
-        if (arg == "--fec-benchmark")
+        if (arg == "--help")
+        {
+            show_help();
+            return 0;
+        }
+        else if (arg == "--fec-benchmark")
         {
             s_fec_benchmark = true;
         }
@@ -286,7 +300,7 @@ int run_fec_benchmark()
         total_data_size += reference.size();
     }
 
-    while (decoded_size + s_mtu < total_data_size)
+    while (decoded_size + s_mtu * 2 < total_data_size)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
@@ -440,12 +454,6 @@ int run_no_fec(Phy& phy)
 
 int main(int argc, const char* argv[])
 {
-    if (argc <= 1)
-    {
-        show_help();
-        return 0;
-    }
-
     int result = parse_arguments(argc, argv);
     if (result < 0)
     {

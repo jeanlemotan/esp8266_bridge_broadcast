@@ -61,7 +61,8 @@ HEADERS += \
     ../../../lib/utils/pigpio.h \
     ../../../lib/utils/command.h \
     ../../../lib/Pool.h \
-    ../../../lib/Fec_Encoder.h
+    ../../../lib/Fec_Encoder.h \
+    ../../../lib/Queue.h
 
 SOURCES += \
     ../../main.cpp \
