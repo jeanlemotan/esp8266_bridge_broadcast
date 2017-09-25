@@ -4,6 +4,7 @@
 #include <string>
 #include <atomic>
 #include <thread>
+#include "Queue.h"
 
 struct fec_t;
 
@@ -25,12 +26,12 @@ public:
         uint8_t coding_k = 12;
         uint8_t coding_n = 20;
         size_t mtu = 1376;
+        bool blocking = true;
+        size_t max_enqueued_packets = 100;
     };
 
     struct TX_Descriptor : public Descriptor
     {
-        bool blocking = true;
-        size_t max_enqueued_packets = 100;
     };
 
     struct RX_Descriptor : public Descriptor
