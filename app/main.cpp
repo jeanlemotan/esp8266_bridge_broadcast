@@ -283,7 +283,7 @@ int run_fec_benchmark()
         total_fec_data_size += size;
         encoded_size += size;
         encoded_packets++;
-        rx.add_rx_packet(data, size);
+        rx.add_rx_packet(data, size, true);
     };
 
     rx.on_rx_data_decoded = [&reference, &decoded_size, &decoded_packets](void const* data, size_t size)
@@ -296,7 +296,7 @@ int run_fec_benchmark()
     Clock::time_point start_tp = Clock::now();
     while (Clock::now() - start_tp < std::chrono::duration<float>(seconds))
     {
-        tx.add_tx_packet(reference.data(), reference.size());
+        tx.add_tx_packet(reference.data(), reference.size(), true);
         total_data_size += reference.size();
     }
 
@@ -389,7 +389,7 @@ int run_fec(Phy& phy)
             if (phy.receive_data(rx_data.data(), rx_data_size, rx_rssi))
             {
                 //std::cout << "received packet " << std::to_string(rx_data_size) << "\n";
-                rx.add_rx_packet(rx_data.data(), rx_data_size);
+                rx.add_rx_packet(rx_data.data(), rx_data_size, true);
             }
         }
 
@@ -397,7 +397,7 @@ int run_fec(Phy& phy)
             int res = read(STDIN_FILENO, tx_data.data(), tx_data.size());
             if (res > 0)
             {
-                tx.add_tx_packet(tx_data.data(), static_cast<size_t>(res));
+                tx.add_tx_packet(tx_data.data(), static_cast<size_t>(res), true);
             }
         }
     }
