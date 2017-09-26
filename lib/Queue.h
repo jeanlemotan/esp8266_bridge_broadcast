@@ -11,17 +11,13 @@
 template<typename T> class Queue
 {
 public:
-    Queue(size_t max_size, bool blocking_push, bool blocking_pop);
+    Queue(size_t max_size);
     ~Queue();
 
     void exit();
 
-    bool push_back(T const& t);
     bool push_back(T const& t, bool block);
     bool push_back_timeout(T const& t, std::chrono::high_resolution_clock::duration timeout);
-
-    bool pop_front(T& dst);
-    bool pop_front(std::vector<T>& dst, size_t max);
 
     bool pop_front(T& dst, bool block);
     bool pop_front(std::vector<T>& dst, size_t max, bool block);
@@ -38,17 +34,13 @@ private:
     std::condition_variable m_cv;
     std::deque<T> m_queue;
     size_t m_max_size = 10;
-    bool m_blocking_push = true;
-    bool m_blocking_pop = true;
     bool m_exit = false;
 };
 
 
 template<class T>
-Queue<T>::Queue(size_t max_size, bool blocking_push, bool blocking_pop)
+Queue<T>::Queue(size_t max_size)
     : m_max_size(max_size)
-    , m_blocking_push(blocking_push)
-    , m_blocking_pop(blocking_pop)
 {
 }
 
@@ -69,12 +61,6 @@ void Queue<T>::exit()
 }
 
 template<class T>
-bool Queue<T>::push_back(T const& dst)
-{
-    return _push_back(dst, m_blocking_push, nullptr);
-}
-
-template<class T>
 bool Queue<T>::push_back(T const& dst, bool block)
 {
     return _push_back(dst, block, nullptr);
@@ -87,15 +73,9 @@ bool Queue<T>::push_back_timeout(T const& dst, std::chrono::high_resolution_cloc
 }
 
 template<typename T>
-bool Queue<T>::pop_front(std::vector<T>& dst, size_t max)
+bool Queue<T>::pop_front(std::vector<T>& dst, size_t max, bool block)
 {
-    return _pop_front(dst, max, m_blocking_pop, nullptr);
-}
-
-template<typename T>
-bool Queue<T>::pop_front(T& dst)
-{
-    return _pop_front(dst, m_blocking_pop, nullptr);
+    return _pop_front(dst, max, block, nullptr);
 }
 
 template<typename T>
@@ -119,6 +99,12 @@ bool Queue<T>::pop_front_timeout(T& dst, std::chrono::high_resolution_clock::dur
 template<class T>
 bool Queue<T>::_push_back(T const& t, bool block, std::chrono::high_resolution_clock::duration* timeout)
 {
+    std::chrono::high_resolution_clock::time_point until = std::chrono::high_resolution_clock::now();
+    if (timeout)
+    {
+        until += *timeout;
+    }
+
     bool pushed_one = false;
     //send the current datagram
     {
@@ -129,7 +115,11 @@ bool Queue<T>::_push_back(T const& t, bool block, std::chrono::high_resolution_c
             {
                 if (timeout)
                 {
-                    m_cv.wait_for(lg, *timeout);
+                    m_cv.wait_until(lg, until);
+                    if (std::chrono::high_resolution_clock::now() >= until)
+                    {
+                        break;
+                    }
                 }
                 else
                 {
@@ -151,12 +141,22 @@ bool Queue<T>::_push_back(T const& t, bool block, std::chrono::high_resolution_c
     {
         m_cv.notify_all();
     }
+//    else
+//    {
+//        printf("Skipped\n");
+//    }
     return pushed_one;
 }
 
 template<typename T>
 bool Queue<T>::_pop_front(std::vector<T>& dst, size_t max, bool block, std::chrono::high_resolution_clock::duration* timeout)
 {
+    std::chrono::high_resolution_clock::time_point until = std::chrono::high_resolution_clock::now();
+    if (timeout)
+    {
+        until += *timeout;
+    }
+
     bool got_some = false;
     {
         //wait for data
@@ -167,7 +167,11 @@ bool Queue<T>::_pop_front(std::vector<T>& dst, size_t max, bool block, std::chro
             {
                 if (timeout)
                 {
-                    m_cv.wait_for(lg, *timeout);
+                    m_cv.wait_until(lg, until);
+                    if (std::chrono::high_resolution_clock::now() >= until)
+                    {
+                        break;
+                    }
                 }
                 else
                 {
@@ -201,6 +205,12 @@ bool Queue<T>::_pop_front(std::vector<T>& dst, size_t max, bool block, std::chro
 template<typename T>
 bool Queue<T>::_pop_front(T& dst, bool block, std::chrono::high_resolution_clock::duration* timeout)
 {
+    std::chrono::high_resolution_clock::time_point until = std::chrono::high_resolution_clock::now();
+    if (timeout)
+    {
+        until += *timeout;
+    }
+
     bool got_some = false;
     {
         //wait for data
@@ -211,7 +221,11 @@ bool Queue<T>::_pop_front(T& dst, bool block, std::chrono::high_resolution_clock
             {
                 if (timeout)
                 {
-                    m_cv.wait_for(lg, *timeout);
+                    m_cv.wait_until(lg, until);
+                    if (std::chrono::high_resolution_clock::now() >= until)
+                    {
+                        break;
+                    }
                 }
                 else
                 {
