@@ -701,6 +701,7 @@ void loop()
 {
   parse_command();
 
+  //send pending wlan packets
   if (!s_wlan_packet.ptr)
   {
     S2W_Packet p;
@@ -716,12 +717,21 @@ void loop()
     
     if (p.ptr)
     {
-      digitalWrite(LED_BUILTIN, LOW);
       memcpy(p.ptr, s_packet_header, HEADER_SIZE);
-      wifi_send_pkt_freedom(p.ptr, HEADER_SIZE + p.size, 0);   
-//      lock_guard lg;
-//      s_wlan_free_queue.push_and_clear(s_wlan_packet);
+      if (wifi_send_pkt_freedom(p.ptr, HEADER_SIZE + p.size, 0) == 0)
+      {
+        digitalWrite(LED_BUILTIN, LOW);
+      }
+      else
+      {
+        LOG("WLAN inject error\n");
+        s_stats.wlan_error_count++;
 
+        {
+          lock_guard lg;
+          end_reading_s2w_packet(s_wlan_packet);
+        }
+      }
     }
   }
 
