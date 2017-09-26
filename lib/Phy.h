@@ -20,7 +20,7 @@ public:
         HW_FAILURE
     };
 
-    Init_Result init_pigpio(size_t port, size_t channel, size_t speed = 8000000, size_t comms_delay = 20);
+    Init_Result init_pigpio(size_t port, size_t channel, size_t speed = 8000000, size_t comms_delay = 25);
     Init_Result init_dev(const char* device, size_t speed = 8000000, size_t comms_delay = 20);
 
     void process();
