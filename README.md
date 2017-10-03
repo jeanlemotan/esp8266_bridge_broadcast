@@ -68,14 +68,15 @@ compiler.c.elf.flags={compiler.warning_flags} -O3 -nostdlib -Wl,--no-check-secti
 ```
 
 
-**Testing**
-Run this on node A:
-`esp8266_app --mtu 400 --fec 12 20`
-And this on node B:
-`dmesg | esp8266_app --mtu 400 --fec 12 20`
-This will send your dmesg output from node B to node A.
+**Testing**  
+Run this on node A:  
+`esp8266_app --mtu 400 --fec 12 20`  
+And this on node B:  
+`dmesg | esp8266_app --mtu 400 --fec 12 20`  
+This will send your dmesg output from node B to node A.  
 
-To test the esp8266 firmware, connect with a serial terminal (the arduino IDE one is good) at 115200 baud and reset the board. You should see the text 'Initialized'. Send a 'V' (for Verbose) and you should start to see stats on the screen, updated every second.
+
+To test the esp8266 firmware, connect with a serial terminal (the arduino IDE one is good) at 115200 baud and reset the board. You should see the text 'Initialized'. Send a 'V' (for Verbose) and you should start to see stats on the screen, updated every second.  
 
 
 
